@@ -1,7 +1,7 @@
 from src.parser import extract_files_from_stacktrace
 
 
-def test_extract_files():
+def test_extract_files_basic():
     stacktrace = """
     Error at auth.js:45
     at login (auth.js:45)
@@ -12,8 +12,11 @@ def test_extract_files():
 
     assert "auth.js" in files
     assert "index.js" in files
-    print(files)
 
 
-if __name__ == "__main__":
-    test_extract_files()
+def test_extract_files_empty():
+    stacktrace = "No file info here"
+
+    files = extract_files_from_stacktrace(stacktrace)
+
+    assert files == []

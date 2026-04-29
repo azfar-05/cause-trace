@@ -12,18 +12,13 @@ def get_commits_in_range(repo_path: str, start_commit: str, end_commit: str):
 
 
 def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> List[Dict]:
-    """
-    Returns structured commit data:
-    [
-        {
-            "hash": str,
-            "message": str,
-            "files": [file1, file2]
-        }
-    ]
-    """
     repo = Repo(repo_path)
-    commits = repo.iter_commits(f"{start_commit}..{end_commit}")
+
+    try:
+        commits = repo.iter_commits(f"{start_commit}..{end_commit}")
+    except GitCommandError:
+        print("Invalid commit range. Falling back to recent commits.")
+        commits = repo.iter_commits(end_commit, max_count=5)
 
     result = []
 
@@ -41,7 +36,8 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
         result.append({
             "hash": commit.hexsha[:7],
             "message": commit.message.strip(),
-            "files": list(set(files))
+            "files": list(set(files)),
+            "timestamp": commit.committed_date
         })
 
     return result
