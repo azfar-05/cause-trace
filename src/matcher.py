@@ -1,18 +1,21 @@
-from typing import List, Dict
-from datetime import datetime
+from typing import List, Dict, Tuple
 
 
 def is_partial_match(file1: str, file2: str) -> bool:
     return file1 in file2 or file2 in file1
 
 
-def score_commit(commit: Dict, stacktrace_files: List[str]) -> float:
+def score_commit(
+    commit: Dict,
+    stacktrace_files: List[str],
+    stacktrace_file_lines: List[Tuple[str, int]]
+) -> float:
     score = 0.0
 
     matching_files = []
     partial_matches = []
 
-    # 🔍 Match detection
+    # 🔍 File-level matching
     for f in commit["files"]:
         if f in stacktrace_files:
             matching_files.append(f)
@@ -22,47 +25,76 @@ def score_commit(commit: Dict, stacktrace_files: List[str]) -> float:
                     partial_matches.append(f)
                     break
 
-    # ✅ Direct matches (strong signal)
+    # ✅ Direct matches
     if matching_files:
         score += 5
         score += len(matching_files) * 2
 
-    # ⚖️ Partial matches (weaker signal)
+    # ⚖️ Partial matches
     if partial_matches:
         score += 2
 
-    # 📉 Penalize noisy commits (but softer)
-    score -= len(commit["files"]) * 0.5
+    # 📉 Noise penalty
+    score -= len(commit["files"]) * 1.2
 
     # 🎯 Focused change bonus
     if len(commit["files"]) == 1 and matching_files:
         score += 3
 
-    # ⏱ Recency bonus
-    commit_time = datetime.fromtimestamp(commit["timestamp"])
-    age_seconds = (datetime.now() - commit_time).total_seconds()
+    # 🧠 Line-level proximity (dedup per file)
+    line_match_score = 0
+    seen_files = set()
 
-    recency_score = max(0, 10 - (age_seconds / 3600))  # decays hourly
-    score += recency_score
+    for file, line in stacktrace_file_lines:
+        if file in commit.get("changed_lines", {}) and file not in seen_files:
+            changed_lines = commit["changed_lines"][file]
+
+            for cl in changed_lines:
+                if abs(cl - line) <= 5:
+                    line_match_score += 10
+                    seen_files.add(file)
+                    break
+
+    score += line_match_score
 
     return score
 
 
-def rank_commits(commits: List[Dict], stacktrace_files: List[str]) -> List[Dict]:
+def rank_commits(
+    commits: List[Dict],
+    stacktrace_files: List[str],
+    stacktrace_file_lines: List[Tuple[str, int]]
+) -> List[Dict]:
     """
-    Rank commits based on relevance to stack trace
+    Rank commits based on relevance to stack trace + recency + line proximity
     """
+    if not commits:
+        return []
+
+    # ⏱ Normalize timestamps
+    timestamps = [c["timestamp"] for c in commits]
+    min_ts = min(timestamps)
+    max_ts = max(timestamps)
+
+    def normalize(ts):
+        if max_ts == min_ts:
+            return 1.0
+        return (ts - min_ts) / (max_ts - min_ts)
+
     scored = []
 
     for commit in commits:
-        score = score_commit(commit, stacktrace_files)
+        base_score = score_commit(commit, stacktrace_files, stacktrace_file_lines)
+        recency = normalize(commit["timestamp"])
+
+        score = base_score + recency * 5
 
         scored.append({
             **commit,
-            "score": round(score, 2)  # cleaner output
+            "score": round(score, 2)
         })
 
-    # 🔥 Sort: score first, then recency
+    # 🔥 Sort by score, then recency
     scored.sort(
         key=lambda x: (x["score"], x["timestamp"]),
         reverse=True

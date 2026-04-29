@@ -1,10 +1,10 @@
 import argparse
-from src.parser import extract_files_from_stacktrace
+import subprocess
+
 from src.git_utils import get_commit_changes
 from src.matcher import rank_commits
 from src.explainer import explain_failure
-
-import subprocess
+from src.parser import extract_files_from_stacktrace, extract_file_line_pairs
 
 
 def is_valid_range(repo_path: str, good: str, bad: str) -> bool:
@@ -16,11 +16,6 @@ def is_valid_range(repo_path: str, good: str, bad: str) -> bool:
 
 
 def run(stacktrace: str, repo_path: str = ".", start_commit: str = None, end_commit: str = None):
-    from src.parser import extract_files_from_stacktrace
-    from src.git_utils import get_commit_changes
-    from src.matcher import rank_commits
-    from src.explainer import explain_failure
-
     if not stacktrace.strip():
         return {
             "files": [],
@@ -28,13 +23,15 @@ def run(stacktrace: str, repo_path: str = ".", start_commit: str = None, end_com
             "explanation": "No stack trace provided."
         }
 
+    # Extract signals
     files = extract_files_from_stacktrace(stacktrace)
+    file_line_pairs = extract_file_line_pairs(stacktrace)
 
-    
+    # Validate inputs
     if not start_commit or not end_commit:
         print("❌ Both --good and --bad commits must be provided")
         return {
-            "files": [],
+            "files": files,
             "top_commits": [],
             "explanation": "Missing commit inputs."
         }
@@ -42,14 +39,16 @@ def run(stacktrace: str, repo_path: str = ".", start_commit: str = None, end_com
     if not is_valid_range(repo_path, start_commit, end_commit):
         print(f"❌ Invalid range: {start_commit} is not an ancestor of {end_commit}")
         return {
-            "files": [],
+            "files": files,
             "top_commits": [],
             "explanation": "Invalid commit range."
         }
 
+    # Get commits
     commits = get_commit_changes(repo_path, start_commit, end_commit)
 
-    ranked = rank_commits(commits, files)
+    # Rank with file + line info
+    ranked = rank_commits(commits, files, file_line_pairs)
 
     explanation = explain_failure(stacktrace, ranked[:2])
 
@@ -58,6 +57,7 @@ def run(stacktrace: str, repo_path: str = ".", start_commit: str = None, end_com
         "top_commits": ranked[:3],
         "explanation": explanation
     }
+
 
 def main():
     parser = argparse.ArgumentParser(description="CauseTrace - Failure Analysis Tool")
@@ -104,6 +104,7 @@ def main():
 
         print("🧠 Likely Cause:\n")
         print(result["explanation"])
+
 
 if __name__ == "__main__":
     main()

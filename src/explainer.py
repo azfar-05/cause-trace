@@ -59,6 +59,7 @@ Confidence: High / Medium / Low
 IMPORTANT:
 The scoring already considers recency and file relevance.
 Do NOT contradict the ranking unless there is strong evidence.
+If commit changed lines near the error location, mention that explicitly.
 """
     headers = {
         "Authorization": f"Bearer {API_KEY}",
