@@ -17,10 +17,20 @@ Commit: {c['hash']}
 Message: {c['message']}
 Files: {c['files']}
 Score: {c['score']}
+Timestamp: {c['timestamp']}
+Signals:
+- File overlap: {set(c['files']).intersection(set(stacktrace.split()))}
+- Num files changed: {len(c['files'])}
 """
 
     prompt = f"""
-You are a senior engineer debugging a failure.
+You are a senior software engineer debugging a failure.
+
+STRICT RULES:
+- Only use the information provided
+- Do NOT assume missing details
+- If evidence is weak, say so
+- Prefer concrete reasoning over generic statements
 
 Stack trace:
 {stacktrace}
@@ -28,10 +38,28 @@ Stack trace:
 Top suspect commits:
 {commit_summaries}
 
-Explain which commit is most likely responsible and why.
-Be concise.
-"""
+Task:
+1. Identify the most likely commit responsible
+2. Explain WHY using:
+   - file overlap with stack trace
+   - type of change
+   - recency
+3. Mention uncertainty if applicable
 
+Output format:
+
+Most Likely Commit: <hash>
+
+Reason:
+- <point 1>
+- <point 2>
+- <point 3 (optional)>
+
+Confidence: High / Medium / Low
+IMPORTANT:
+The scoring already considers recency and file relevance.
+Do NOT contradict the ranking unless there is strong evidence.
+"""
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
