@@ -9,6 +9,12 @@ def extract_files_from_stacktrace(stacktrace: str) -> List[str]:
     files = list(set(match.split("/")[-1] for match in matches))
     return files
 
+def extract_functions_from_stacktrace(stacktrace: str) -> List[str]:
+    pattern = r'at\s+(\w+)\s*\('
+    matches = re.findall(pattern, stacktrace)
+
+    return list(set(matches))
+
 
 def extract_file_line_pairs(stacktrace: str) -> List[Tuple[str, int]]:
     pattern = r'([\w\/\.-]+\.\w+):(\d+)'

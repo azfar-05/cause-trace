@@ -8,8 +8,15 @@ def test_rank_commits_basic():
     ]
 
     stacktrace_files = ["main.py"]
+    stacktrace_file_lines = []
+    failure_functions = []  # ✅ move inside function
 
-    ranked = rank_commits(commits, stacktrace_files)
+    ranked = rank_commits(
+        commits,
+        stacktrace_files,
+        stacktrace_file_lines,
+        failure_functions
+    )
 
     assert ranked[0]["hash"] == "1"
     assert ranked[0]["score"] > ranked[1]["score"]

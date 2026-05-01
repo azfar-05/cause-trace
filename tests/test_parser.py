@@ -1,5 +1,5 @@
 from src.parser import extract_files_from_stacktrace
-
+failure_functions = []
 
 def test_extract_files_basic():
     stacktrace = """
