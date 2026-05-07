@@ -34,3 +34,34 @@ def test_call_site_breakage_prioritized():
 
     # This is the key expectation
     assert ranked[0]["hash"] == "1"
+
+def test_call_site_multiple_overlap_stronger():
+    commits = [
+        {
+            "hash": "1",
+            "files": ["utils.py"],
+            "timestamp": 1000,
+            "changed_lines": {},
+            "modified_functions": ["a", "b", "c"],
+        },
+        {
+            "hash": "2",
+            "files": ["utils.py"],
+            "timestamp": 1000,
+            "changed_lines": {},
+            "modified_functions": ["a"],
+        },
+    ]
+
+    stacktrace_files = []
+    stacktrace_file_lines = []
+    failure_functions = ["a", "b", "c"]
+
+    ranked = rank_commits(
+        commits,
+        stacktrace_files,
+        stacktrace_file_lines,
+        failure_functions
+    )
+
+    assert ranked[0]["hash"] == "1"

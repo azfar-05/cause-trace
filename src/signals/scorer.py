@@ -3,14 +3,28 @@ from src.signals.file_overlap import file_overlap_score
 from src.signals.partial_match import partial_match_score
 from src.signals.call_site import call_site_breakage_score
 
+
 def score_commit(commit, stacktrace_files, stacktrace_file_lines, failure_functions):
+    """
+    Compute a deterministic relevance score for a commit based on failure context.
+
+    Signals:
+    - File overlap (strong)
+    - Partial filename match (weak)
+    - Function-level overlap / call-site breakage (structural signal)
+    - Line proximity (strongest)
+    - Commit size penalty (noise reduction)
+    - Focus bonus (single-file targeted change)
+
+    The scoring is additive, with penalties applied directly.
+    """
+
     score = 0.0
 
-    # 1. File overlap (strong)
+    # File-level signals
     file_score, matching_files = file_overlap_score(commit, stacktrace_files)
     score += file_score
 
-    # 2. Partial match (weaker)
     partial_score, _ = partial_match_score(
         commit,
         stacktrace_files,
@@ -18,18 +32,17 @@ def score_commit(commit, stacktrace_files, stacktrace_file_lines, failure_functi
     )
     score += partial_score
 
-
-    # 3. Call site breakage
+    # Structural signal (function-level)
     score += call_site_breakage_score(commit, failure_functions)
 
-    # 4. Noise penalty
+    # Noise penalty (larger commits are less precise)
     score -= len(commit["files"]) * 1.2
 
-    # 5. Focus bonus
+    # Focus bonus (single-file precise change)
     if len(commit["files"]) == 1 and matching_files:
         score += 3
 
-    # 6. Line proximity (strongest)
+    # Line-level signal (highest precision)
     score += line_proximity_score(commit, stacktrace_file_lines)
 
     return score

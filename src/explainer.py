@@ -8,24 +8,26 @@ API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 
 def explain_failure(stacktrace: str, top_commits: list) -> str:
+    """
+    Generate a grounded explanation for the top-ranked commit.
+
+    The LLM must explain the ranking using only deterministic signals.
+    It must not override the ranking or introduce external reasoning.
+    """
+
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     commit_summaries = ""
-    for c in top_commits:
-        changed_lines_info = ""
-        if c.get("changed_lines"):
-            changed_lines_info = f"- Changed lines: {c['changed_lines']}\n"
 
+    for c in top_commits:
         commit_summaries += f"""
 Commit: {c['hash']}
-Message: {c['message']}
 Files: {c['files']}
 Score: {c['score']}
 Timestamp: {c['timestamp']}
-Signals:
-- File overlap: {set(c['files']).intersection(set(stacktrace.split()))}
-- Total files changed: {len(c['files'])}
-{changed_lines_info}
+Modified functions: {c.get('modified_functions', [])}
+Changed lines: {c.get('changed_lines', {})}
+Total files changed: {len(c['files'])}
 """
 
     prompt = f"""
@@ -40,27 +42,31 @@ STRICT RULES:
 Stack trace:
 {stacktrace}
 
-Top suspect commits:
+Top suspect commits (ranked):
 {commit_summaries}
 
-AVAILABLE SIGNALS (already computed):
-- File overlap with stack trace
-- Line-level proximity (changed lines near error location)
+AVAILABLE SIGNALS:
+- File overlap
+- Line-level proximity (changed lines near failure line)
+- Function-level overlap or similarity
 - Commit size (number of files changed)
-- Recency (relative within window)
+- Recency (relative ordering)
 
 IMPORTANT:
+- The FIRST commit is already selected as the most likely cause
+- Do NOT override the ranking
 - Line proximity is the strongest signal when present
-- Larger commits are LESS precise (do not treat them as more likely)
-- The ranking already combines all signals — do not contradict it without strong evidence
+- Function-level overlap indicates structural relationship
+- Larger commits are less precise
 
 Task:
-1. Identify the most likely commit
-2. Explain WHY using ONLY:
-   - file overlap
+1. Use the FIRST commit as the most likely cause
+2. Explain WHY using:
+   - file overlap (if present)
    - line proximity (if present)
+   - function-level overlap or similarity (if present)
    - recency (if relevant)
-3. Do NOT use commit message meaning as primary evidence
+3. Do NOT rely on commit message meaning
 
 Output format:
 
@@ -69,6 +75,7 @@ Most Likely Commit: <hash>
 Reason:
 - <file overlap reasoning>
 - <line proximity reasoning if applicable>
+- <function-level reasoning if applicable>
 - <supporting signal (recency or others)>
 
 Confidence: High / Medium / Low

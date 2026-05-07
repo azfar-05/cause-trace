@@ -1,11 +1,25 @@
 def is_partial_match(file1: str, file2: str) -> bool:
+    """
+    Determine if two file names partially match.
+    """
     return file1 in file2 or file2 in file1
 
 
 def partial_match_score(commit, stacktrace_files, exclude_files):
+    """
+    Compute a weak score based on partial filename matches.
+
+    Excludes files that already have direct matches.
+
+    Returns:
+    - score (int)
+    - partial_matches (list[str])
+    """
+
+    commit_files = commit.get("files", [])
     partial_matches = []
 
-    for f in commit["files"]:
+    for f in commit_files:
         if f in exclude_files:
             continue
 
@@ -14,8 +28,8 @@ def partial_match_score(commit, stacktrace_files, exclude_files):
                 partial_matches.append(f)
                 break
 
-    score = 0
-    if partial_matches:
-        score += 2
+    if not partial_matches:
+        return 0, []
 
-    return score, partial_matches
+    # Weak signal: any partial match
+    return 2, partial_matches

@@ -1,22 +1,27 @@
-from git import Repo, GitCommandError
+from git import Repo, GitCommandError, NULL_TREE
 from typing import List, Dict
-from git import NULL_TREE
 import subprocess
-import re 
+import re
 
 
 def get_commits_in_range(repo_path: str, start_commit: str, end_commit: str):
+    """
+    Return commits in the range (start_commit, end_commit].
+    """
     repo = Repo(repo_path)
 
     try:
-        commits = list(repo.iter_commits(f"{start_commit}..{end_commit}"))
+        return list(repo.iter_commits(f"{start_commit}..{end_commit}"))
     except GitCommandError:
         raise Exception(f"Invalid commit range: {start_commit}..{end_commit}")
 
-    return commits
-
 
 def get_changed_lines(repo_path: str, commit_hash: str):
+    """
+    Extract changed line numbers per file using `git show --unified=0`.
+    Returns:
+        { filename: [line_numbers] }
+    """
     changed = {}
 
     try:
@@ -24,9 +29,10 @@ def get_changed_lines(repo_path: str, commit_hash: str):
             ["git", "show", commit_hash, "--unified=0"],
             cwd=repo_path,
             capture_output=True,
-            text=True
+            text=True,
+            check=False,
         )
-    except:
+    except Exception:
         return changed
 
     current_file = None
@@ -42,7 +48,7 @@ def get_changed_lines(repo_path: str, commit_hash: str):
                     try:
                         start_line = int(p.split(",")[0][1:])
                         changed.setdefault(current_file, []).append(start_line)
-                    except:
+                    except Exception:
                         pass
                     break
 
@@ -50,6 +56,13 @@ def get_changed_lines(repo_path: str, commit_hash: str):
 
 
 def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> List[Dict]:
+    """
+    Extract structured commit data for scoring.
+    Includes:
+    - files touched
+    - changed lines
+    - modified functions (heuristic)
+    """
     repo = Repo(repo_path)
 
     try:
@@ -66,26 +79,24 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
         files = set()
         modified_functions = set()
 
-        # 🔧 IMPORTANT: enable patch extraction
+        # Extract diffs with patch
         if not commit.parents:
             diffs = commit.diff(NULL_TREE, create_patch=True)
         else:
             diffs = commit.diff(commit.parents[0], create_patch=True)
 
         for diff in diffs:
-            # file tracking
             if diff.a_path:
                 files.add(diff.a_path.split("/")[-1])
             if diff.b_path:
                 files.add(diff.b_path.split("/")[-1])
 
-            # ✅ extract functions from patch
             if diff.diff:
                 patch_text = diff.diff.decode("utf-8", errors="ignore")
-                funcs = extract_modified_functions_from_patch(patch_text)
-                modified_functions.update(funcs)
+                modified_functions.update(
+                    extract_modified_functions_from_patch(patch_text)
+                )
 
-        # line-level changes
         changed_lines = get_changed_lines(repo_path, commit.hexsha)
 
         result.append({
@@ -94,28 +105,45 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
             "files": list(files),
             "timestamp": commit.committed_date,
             "changed_lines": changed_lines,
-            "modified_functions": list(modified_functions)
+            "modified_functions": list(modified_functions),
         })
 
     return result
 
 
 def extract_modified_functions_from_patch(patch_text: str):
+    """
+    Heuristically detect functions whose bodies were modified.
+
+    Strategy:
+    - Track current function context from definitions
+    - Assign added lines ('+') to the most recent function
+    - Supports Python and common JavaScript patterns
+    """
     functions = set()
+    current_function = None
 
-    lines = patch_text.split("\n")
-
-    for line in lines:
-        if not line.startswith("+"):
+    for line in patch_text.split("\n"):
+        # Python: def func(
+        py_match = re.search(r"def\s+(\w+)\s*\(", line)
+        if py_match:
+            current_function = py_match.group(1)
             continue
 
-        py_match = re.search(r"def\s+(\w+)\s*\(", line)
+        # JS: function func(
         js_match = re.search(r"function\s+(\w+)\s*\(", line)
+        if js_match:
+            current_function = js_match.group(1)
+            continue
+
+        # JS arrow: const fn = (...) =>
         arrow_match = re.search(r"(\w+)\s*=\s*\(?.*\)?\s*=>", line)
+        if arrow_match:
+            current_function = arrow_match.group(1)
+            continue
 
-        match = py_match or js_match or arrow_match
-
-        if match:
-            functions.add(match.group(1))
+        # Assign added lines to current function
+        if line.startswith("+") and current_function:
+            functions.add(current_function)
 
     return list(functions)
