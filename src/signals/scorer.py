@@ -4,7 +4,13 @@ from src.signals.partial_match import partial_match_score
 from src.signals.call_site import call_site_breakage_score
 
 
-def score_commit(commit, stacktrace_files, stacktrace_file_lines, failure_functions):
+def score_commit(
+    commit,
+    stacktrace_files,
+    stacktrace_file_lines,
+    failure_functions,
+    include_breakdown=False,
+):
     """
     Compute a deterministic relevance score for a commit based on failure context.
 
@@ -33,16 +39,37 @@ def score_commit(commit, stacktrace_files, stacktrace_file_lines, failure_functi
     score += partial_score
 
     # Structural signal (function-level)
-    score += call_site_breakage_score(commit, failure_functions)
+    function_score = call_site_breakage_score(commit, failure_functions)
+    score += function_score
 
     # Noise penalty (larger commits are less precise)
-    score -= len(commit["files"]) * 1.2
+    size_penalty = len(commit["files"]) * 1.2
+    score -= size_penalty
 
     # Focus bonus (single-file precise change)
+    focus_bonus = 0
     if len(commit["files"]) == 1 and matching_files:
-        score += 3
+        focus_bonus = 3
+        score += focus_bonus
 
     # Line-level signal (highest precision)
-    score += line_proximity_score(commit, stacktrace_file_lines)
+    line_score = line_proximity_score(
+        commit,
+        stacktrace_file_lines,
+        matching_files,
+    )
+    score += line_score
 
-    return score
+    if not include_breakdown:
+        return score
+
+    breakdown = {
+        "line": line_score,
+        "function": function_score,
+        "file": file_score,
+        "partial_file": partial_score,
+        "focus_bonus": focus_bonus,
+        "size_penalty": size_penalty,
+        "base_score": score,
+    }
+    return score, breakdown

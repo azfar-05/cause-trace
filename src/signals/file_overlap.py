@@ -9,7 +9,24 @@ def file_overlap_score(commit, stacktrace_files):
     """
 
     commit_files = commit.get("files", [])
-    matching_files = [f for f in commit_files if f in stacktrace_files]
+    matching_files = []
+
+    for stacktrace_file in stacktrace_files:
+        exact_matches = [f for f in commit_files if f == stacktrace_file]
+        if exact_matches:
+            matching_files.extend(
+                f for f in exact_matches if f not in matching_files
+            )
+            continue
+
+        stacktrace_basename = stacktrace_file.split("/")[-1]
+        basename_matches = [
+            f for f in commit_files
+            if f.split("/")[-1] == stacktrace_basename
+        ]
+        matching_files.extend(
+            f for f in basename_matches if f not in matching_files
+        )
 
     if not matching_files:
         return 0, []
