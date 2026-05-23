@@ -55,6 +55,41 @@ def get_changed_lines(repo_path: str, commit_hash: str):
     return changed
 
 
+def find_enclosing_functions(repo_path: str, commit_hash: str, filepath: str, line_numbers: List[int]) -> List[str]:
+    """
+    Find enclosing Python function names for a set of changed line numbers.
+
+    Reads the file content at the given commit and scans backward from each
+    line number to find the nearest enclosing def. Handles both module-level
+    functions and class methods.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit_hash}:{filepath}"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    file_lines = result.stdout.splitlines()
+    functions = set()
+
+    for line_num in line_numbers:
+        for i in range(min(line_num - 1, len(file_lines) - 1), -1, -1):
+            m = re.match(r"\s*def\s+(\w+)\s*\(", file_lines[i])
+            if m:
+                functions.add(m.group(1))
+                break
+
+    return list(functions)
+
+
 def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> List[Dict]:
     """
     Extract structured commit data for scoring.
@@ -78,6 +113,7 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
     for commit in commits:
         files = set()
         modified_functions = set()
+        full_path_map: Dict[str, str] = {}  # basename -> full repo path for Python files
 
         # Extract diffs with patch
         if not commit.parents:
@@ -89,7 +125,10 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
             if diff.a_path:
                 files.add(diff.a_path.split("/")[-1])
             if diff.b_path:
-                files.add(diff.b_path.split("/")[-1])
+                basename = diff.b_path.split("/")[-1]
+                files.add(basename)
+                if diff.b_path.endswith(".py"):
+                    full_path_map[basename] = diff.b_path
 
             if diff.diff:
                 patch_text = diff.diff.decode("utf-8", errors="ignore")
@@ -98,6 +137,14 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
                 )
 
         changed_lines = get_changed_lines(repo_path, commit.hexsha)
+
+        for basename, lines in changed_lines.items():
+            full_path = full_path_map.get(basename)
+            if not full_path or not lines:
+                continue
+            modified_functions.update(
+                find_enclosing_functions(repo_path, commit.hexsha, full_path, lines)
+            )
 
         result.append({
             "hash": commit.hexsha[:7],
