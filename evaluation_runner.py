@@ -279,12 +279,36 @@ def generate_test_cases() -> List[Dict]:
 
 TEST_CASES = [
     {
-    "repo_path": "/Users/azfar/flask",
-    "stacktrace": 'File "src/flask/app.py", line 984, in unknown_function\n    RuntimeError: test failure',
-    "good_commit": "e71a5ff8de93801c30ed6daecac4b8502aa86813",
-    "bad_commit": "025589ee766249652e2e097da05808fe64911ddc",
-    "expected_commit": "025589ee766249652e2e097da05808fe64911ddc",
-}
+        "repo_path": "/Users/azfar/flask",
+        "stacktrace": 'File "src/flask/app.py", line 984, in unknown_function\n    RuntimeError: test failure',
+        "good_commit": "e71a5ff8de93801c30ed6daecac4b8502aa86813",
+        "bad_commit": "025589ee766249652e2e097da05808fe64911ddc",
+        "expected_commit": "025589ee766249652e2e097da05808fe64911ddc",
+    },
+    # redirect() default code changed 302 -> 303; any test asserting status_code == 302 breaks
+    {
+        "repo_path": "/Users/azfar/flask",
+        "stacktrace": 'File "src/flask/helpers.py", line 242, in redirect\n    AssertionError: assert response.status_code == 302',
+        "good_commit": "eb58d862cc4a8f31a369b6e9ad1724e9e642f13f",
+        "bad_commit": "eca5fd1dfdc614c2df876cc32018a7d71f84ea82",
+        "expected_commit": "eca5fd1dfdc614c2df876cc32018a7d71f84ea82",
+    },
+    # dispatch_request signature gained ctx parameter; subclass overrides get TypeError
+    {
+        "repo_path": "/Users/azfar/flask",
+        "stacktrace": 'File "src/flask/app.py", line 965, in dispatch_request\n    TypeError: dispatch_request() missing 1 required positional argument: \'ctx\'',
+        "good_commit": "adf363679da2d9a5ddc564bb2da563c7ca083916",
+        "bad_commit": "6a64969009bf1898bd302e6a9633f71942523f7f",
+        "expected_commit": "6a64969009bf1898bd302e6a9633f71942523f7f",
+    },
+    # teardown now collects all errors; failure surfaces in AppContext.pop via ctx.py
+    {
+        "repo_path": "/Users/azfar/flask",
+        "stacktrace": 'File "src/flask/ctx.py", line 504, in pop\n    ExceptionGroup: Errors during context teardown',
+        "good_commit": "7b0088693ece1bd3a9238a6fdf56ed8df7a4d43b",
+        "bad_commit": "fbb6f0bc4c60a0bada0e03c3480d0ccf30a3c1df",
+        "expected_commit": "fbb6f0bc4c60a0bada0e03c3480d0ccf30a3c1df",
+    },
 ] + generate_test_cases()
 
 @dataclass

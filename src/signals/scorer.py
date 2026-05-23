@@ -1,3 +1,5 @@
+import math
+
 from src.signals.line_proximity import line_proximity_score
 from src.signals.file_overlap import file_overlap_score
 from src.signals.partial_match import partial_match_score
@@ -42,8 +44,8 @@ def score_commit(
     function_score = call_site_breakage_score(commit, failure_functions)
     score += function_score
 
-    # Noise penalty (larger commits are less precise)
-    size_penalty = len(commit["files"]) * 1.2
+    # Noise penalty (larger commits are less precise; sqrt dampens growth for large commits)
+    size_penalty = math.sqrt(len(commit["files"])) * 1.2
     score -= size_penalty
 
     # Focus bonus (single-file precise change)
