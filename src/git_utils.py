@@ -1,5 +1,5 @@
 from git import Repo, GitCommandError, NULL_TREE
-from typing import List, Dict
+from typing import Dict, List, Optional, Set, Tuple
 import subprocess
 import re
 
@@ -55,14 +55,9 @@ def get_changed_lines(repo_path: str, commit_hash: str):
     return changed
 
 
-def find_enclosing_functions(repo_path: str, commit_hash: str, filepath: str, line_numbers: List[int]) -> List[str]:
-    """
-    Find enclosing Python function names for a set of changed line numbers.
-
-    Reads the file content at the given commit and scans backward from each
-    line number to find the nearest enclosing def. Handles both module-level
-    functions and class methods.
-    """
+def _fetch_file_at_commit(
+    repo_path: str, commit_hash: str, filepath: str
+) -> Optional[List[str]]:
     try:
         result = subprocess.run(
             ["git", "show", f"{commit_hash}:{filepath}"],
@@ -72,22 +67,70 @@ def find_enclosing_functions(repo_path: str, commit_hash: str, filepath: str, li
             check=False,
         )
     except Exception:
-        return []
-
+        return None
     if result.returncode != 0:
-        return []
+        return None
+    return result.stdout.splitlines()
 
-    file_lines = result.stdout.splitlines()
+
+def _enclosing_functions_from_lines(
+    file_lines: List[str], line_numbers: List[int]
+) -> List[str]:
     functions = set()
-
     for line_num in line_numbers:
         for i in range(min(line_num - 1, len(file_lines) - 1), -1, -1):
             m = re.match(r"\s*def\s+(\w+)\s*\(", file_lines[i])
             if m:
                 functions.add(m.group(1))
                 break
-
     return list(functions)
+
+
+def find_enclosing_functions(
+    repo_path: str, commit_hash: str, filepath: str, line_numbers: List[int]
+) -> List[str]:
+    """
+    Find enclosing Python function names for a set of changed line numbers.
+
+    Reads the file content at the given commit and scans backward from each
+    line number to find the nearest enclosing def. Handles both module-level
+    functions and class methods.
+    """
+    file_lines = _fetch_file_at_commit(repo_path, commit_hash, filepath)
+    if file_lines is None:
+        return []
+    return _enclosing_functions_from_lines(file_lines, line_numbers)
+
+
+def find_structural_call_pairs(
+    file_lines: List[str],
+    modified_fn_names: Set[str],
+) -> Set[Tuple[str, str]]:
+    """
+    Scan a file for functions that call any modified function.
+
+    Returns pairs of (caller_function, called_modified_function).
+    Bounded to the file — does not resolve imports or traverse call graphs.
+    Self-calls (caller == callee) are excluded.
+    """
+    pairs: Set[Tuple[str, str]] = set()
+    current_fn: Optional[str] = None
+
+    for line in file_lines:
+        stripped = line.lstrip()
+        m = re.match(r"def\s+(\w+)\s*\(", stripped)
+        if m:
+            current_fn = m.group(1)
+            continue
+
+        if current_fn:
+            for target in modified_fn_names:
+                if current_fn != target and re.search(
+                    rf"\b{re.escape(target)}\s*\(", line
+                ):
+                    pairs.add((current_fn, target))
+
+    return pairs
 
 
 def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> List[Dict]:
@@ -138,12 +181,23 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
 
         changed_lines = get_changed_lines(repo_path, commit.hexsha)
 
+        # First pass: fetch file content once per Python file, resolve enclosing functions
+        file_cache: Dict[str, List[str]] = {}
         for basename, lines in changed_lines.items():
             full_path = full_path_map.get(basename)
             if not full_path or not lines:
                 continue
-            modified_functions.update(
-                find_enclosing_functions(repo_path, commit.hexsha, full_path, lines)
+            file_lines = _fetch_file_at_commit(repo_path, commit.hexsha, full_path)
+            if file_lines is None:
+                continue
+            file_cache[basename] = file_lines
+            modified_functions.update(_enclosing_functions_from_lines(file_lines, lines))
+
+        # Second pass: find structural call pairs with complete modified_functions
+        structural_call_pairs: Set[Tuple[str, str]] = set()
+        for file_lines in file_cache.values():
+            structural_call_pairs.update(
+                find_structural_call_pairs(file_lines, modified_functions)
             )
 
         result.append({
@@ -153,6 +207,7 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
             "timestamp": commit.committed_date,
             "changed_lines": changed_lines,
             "modified_functions": list(modified_functions),
+            "structural_call_pairs": structural_call_pairs,
         })
 
     return result

@@ -40,8 +40,10 @@ def score_commit(
     )
     score += partial_score
 
-    # Structural signal (function-level)
-    function_score = call_site_breakage_score(commit, failure_functions)
+    # Structural signal (function-level + caller/callee adjacency)
+    function_score, caller_callee_score = call_site_breakage_score(
+        commit, failure_functions, include_breakdown=True
+    )
     score += function_score
 
     # Noise penalty (larger commits are less precise; sqrt dampens growth for large commits)
@@ -68,6 +70,7 @@ def score_commit(
     breakdown = {
         "line": line_score,
         "function": function_score,
+        "caller_callee": caller_callee_score,
         "file": file_score,
         "partial_file": partial_score,
         "focus_bonus": focus_bonus,
