@@ -123,5 +123,44 @@
     "failure_mode": "mixed_structural",
     "dominant_signals": ["file", "function", "line"],
     "tags": ["file-overlap", "function-overlap", "line-proximity"]
+  },
+  {
+    "id": "pytest-expression-scanner-backslash",
+    "repo": "pytest",
+    "language": "python",
+    "good_commit": "04f457c4f4fb38ea7ba8c88cd3a15fdc83722840",
+    "bad_commit": "1e7eb20347819eb86cd22be998fef0dc50db47da",
+    "expected_commit": "1e7eb20347819eb86cd22be998fef0dc50db47da",
+    "stacktrace": "File \"src/_pytest/mark/expression.py\", line 111, in lex\n    raise ParseError(\n_pytest.mark.expression.ParseError: at column 1: escaping with \"\\\" not supported in marker expression",
+    "description": "string literal scanner searched entire input for backslash (input.find) instead of only the current token value (value.find); identifiers with backslashes in the same expression as string literals trigger false escaping errors",
+    "failure_mode": "line_proximity",
+    "dominant_signals": ["file", "function", "line"],
+    "tags": ["file-overlap", "function-overlap", "line-proximity"]
+  },
+  {
+    "id": "werkzeug-get-host-security-error",
+    "repo": "werkzeug",
+    "language": "python",
+    "good_commit": "2c6a3a528219385f8b7d6ad40d5184c07cd7f87b",
+    "bad_commit": "d3d3df56c98ba84111a15118d38e8dbfba71c3fd",
+    "expected_commit": "d3d3df56c98ba84111a15118d38e8dbfba71c3fd",
+    "stacktrace": "File \"src/werkzeug/sansio/utils.py\", line 141, in get_host\n    raise SecurityError(f\"Host {host!r} is not trusted.\")\nwerkzeug.exceptions.SecurityError: Host '' is not trusted.",
+    "description": "host validation regex added to get_host; HTTP/0.9 and 1.0 requests without Host header produce empty string that fails _host_re.fullmatch check, causing SecurityError instead of returning empty string",
+    "failure_mode": "function_overlap",
+    "dominant_signals": ["file", "function", "line"],
+    "tags": ["file-overlap", "function-overlap", "line-proximity"]
+  },
+  {
+    "id": "werkzeug-duplicate-rule-error",
+    "repo": "werkzeug",
+    "language": "python",
+    "good_commit": "b43ad6ec8679d20a778e93b1a9e852c1e2937f2a",
+    "bad_commit": "9bca0b8eab3bdca5cd67a9a736988ac94eb7fa4f",
+    "expected_commit": "9bca0b8eab3bdca5cd67a9a736988ac94eb7fa4f",
+    "stacktrace": "File \"src/werkzeug/routing/matcher.py\", line 57, in add\n    raise DuplicateRuleError(existing, rule)\nwerkzeug.routing.exceptions.DuplicateRuleError: /api/users → users_list",
+    "description": "StateMachineMatcher.add gained duplicate route detection; apps that registered identical routes (same path and websocket flag) now raise DuplicateRuleError on startup instead of silently accepting both",
+    "failure_mode": "function_overlap",
+    "dominant_signals": ["file", "function", "line"],
+    "tags": ["file-overlap", "function-overlap", "line-proximity"]
   }
 ]
