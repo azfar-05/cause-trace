@@ -31,6 +31,8 @@ TEST_CASES = load_cases(CASES_PATH)
 
 @dataclass
 class EvaluationResult:
+    case_id: str
+    failure_mode: str
     repo_path: str
     expected_commit: str
     predicted_commits: List[Dict]
@@ -146,6 +148,8 @@ def evaluate_test_case(test_case: Dict[str, str]) -> EvaluationResult:
     top_five = with_breakdowns[:5]
 
     return EvaluationResult(
+        case_id=test_case.get("id", "unknown"),
+        failure_mode=test_case.get("failure_mode", "unknown"),
         repo_path=test_case["repo_path"],
         expected_commit=test_case["expected_commit"],
         predicted_commits=top_five,
@@ -161,85 +165,129 @@ def percentage(count: int, total: int) -> float:
     return (count / total) * 100
 
 
-def print_test_result(index: int, result: EvaluationResult) -> None:
-    print(f"Test {index}")
-    print(f"Repo: {result.repo_path}")
-    print(f"Expected commit: {result.expected_commit}")
-    print("Top 5 predicted commits:")
+W = 64  # output width
+
+
+def _signal_summary(breakdown: Dict) -> str:
+    parts = []
+    if breakdown.get("line", 0):
+        parts.append(f"line={breakdown['line']:.0f}")
+    if breakdown.get("function", 0):
+        parts.append(f"fn={breakdown['function']:.0f}")
+    if breakdown.get("caller_callee", 0):
+        parts.append(f"cc={breakdown['caller_callee']:.0f}")
+    if breakdown.get("file", 0):
+        parts.append(f"file={breakdown['file']:.0f}")
+    if not parts:
+        parts.append("recency-only")
+    return "  ".join(parts)
+
+
+def _result_label(result: "EvaluationResult") -> str:
+    if result.matched_top1:
+        return "PASS  (top-1)"
+    if result.matched_top3:
+        return "PASS  (top-3)"
+    if result.matched_top5:
+        return "PASS  (top-5)"
+    return "FAIL"
+
+
+def print_test_result(index: int, total: int, result: "EvaluationResult") -> None:
+    expected_short = result.expected_commit[:7]
+    label = _result_label(result)
+    mode = result.failure_mode
+
+    print(f"\n{'─' * W}")
+    print(f"  Case {index}/{total}  ·  {result.case_id}  [{mode}]")
+    print(f"{'─' * W}")
+    print(f"  Expected   {expected_short}     Result  {label}")
+    print()
 
     if not result.predicted_commits:
-        print("  None")
+        print("  (no commits scored)")
     else:
+        # Header row
+        print(f"  {'Rank':<6}{'Hash':<10}{'Score':>7}  {'Signals'}")
+        print(f"  {'─'*4}  {'─'*7}  {'─'*5}  {'─'*30}")
         for rank, commit in enumerate(result.predicted_commits, start=1):
-            breakdown = commit["breakdown"]
-            print(
-                f"  {rank}. {commit['hash']} | score={commit['score']} | "
-                f"{commit['message']}"
-            )
-            print(f"     Commit: {commit['hash']}")
-            print(f"       final: {breakdown['final']}")
-            print(f"       line: {breakdown['line']}")
-            print(f"       function: {breakdown['function']}")
-            print(f"       file: {breakdown['file']}")
-            print(f"       recency: {breakdown['recency']}")
-            print(f"       size_penalty: {breakdown['size_penalty']}")
+            bd = commit["breakdown"]
+            is_match = commit_matches(result.expected_commit, commit["hash"])
+            marker = "✓" if is_match else " "
+            msg = commit["message"].splitlines()[0][:32]
+            signals = _signal_summary(bd)
+            score_str = f"{commit['score']:>6.2f}"
+            print(f"  #{rank}{marker}  {commit['hash']:<8}  {score_str}  {signals}")
+            print(f"         {msg}")
+        print()
 
-    print_line_score_warnings(result.predicted_commits)
-    print(f"Matched top1: {'yes' if result.matched_top1 else 'no'}")
-    print(f"Matched top3: {'yes' if result.matched_top3 else 'no'}")
-    print(f"Matched top5: {'yes' if result.matched_top5 else 'no'}")
-    print("-" * 60)
-
-
-def print_line_score_warnings(predicted_commits: Sequence[Dict]) -> None:
-    if not predicted_commits:
-        return
-
-    top_commit = predicted_commits[0]
-    top_line_score = top_commit["breakdown"]["line"]
-
-    for commit in predicted_commits[1:]:
-        candidate_line_score = commit["breakdown"]["line"]
-        if candidate_line_score > top_line_score:
-            print("[WARNING] Higher line-score commit ranked lower:")
-            print(f"  Top1: {top_commit['hash']} (line={top_line_score})")
-            print(
-                f"  Candidate: {commit['hash']} "
-                f"(line={candidate_line_score})"
-            )
+    # Warning: higher line-score commit ranked lower than top-1
+    if result.predicted_commits:
+        top = result.predicted_commits[0]
+        top_line = top["breakdown"]["line"]
+        for c in result.predicted_commits[1:]:
+            if c["breakdown"]["line"] > top_line:
+                print(f"  [NOTE] #{result.predicted_commits.index(c)+1} has higher line score"
+                      f" than #1 ({c['breakdown']['line']} vs {top_line})")
 
 
-def print_summary(results: Iterable[EvaluationResult]) -> None:
+def print_summary(results: Iterable["EvaluationResult"]) -> None:
     results = list(results)
     total = len(results)
-    top1_hits = sum(result.matched_top1 for result in results)
-    top3_hits = sum(result.matched_top3 for result in results)
-    top5_hits = sum(result.matched_top5 for result in results)
+    top1_hits = sum(r.matched_top1 for r in results)
+    top3_hits = sum(r.matched_top3 for r in results)
+    top5_hits = sum(r.matched_top5 for r in results)
 
-    print("Overall Accuracy")
-    print(f"Total tests: {total}")
-    print(f"Top1: {top1_hits}/{total} ({percentage(top1_hits, total):.1f}%)")
-    print(f"Top3: {top3_hits}/{total} ({percentage(top3_hits, total):.1f}%)")
-    print(f"Top5: {top5_hits}/{total} ({percentage(top5_hits, total):.1f}%)")
+    print(f"\n{'═' * W}")
+    print("  EVALUATION SUMMARY")
+    print(f"{'═' * W}")
+    print(f"  Cases     {total}")
+    print(f"  Top-1     {top1_hits}/{total}  ({percentage(top1_hits, total):.1f}%)")
+    print(f"  Top-3     {top3_hits}/{total}  ({percentage(top3_hits, total):.1f}%)")
+    print(f"  Top-5     {top5_hits}/{total}  ({percentage(top5_hits, total):.1f}%)")
+
+    # Per-failure-mode breakdown
+    from collections import defaultdict
+    by_mode: Dict[str, List[bool]] = defaultdict(list)
+    for r in results:
+        by_mode[r.failure_mode].append(r.matched_top1)
+
+    print()
+    print("  By failure mode (top-1):")
+    for mode, hits in sorted(by_mode.items()):
+        n = len(hits)
+        h = sum(hits)
+        bar = "✓" * h + "✗" * (n - h)
+        print(f"    {mode:<30}  {h}/{n}  {bar}")
+
+    # List failures
+    failures = [r for r in results if not r.matched_top1]
+    if failures:
+        print()
+        print("  Failed cases:")
+        for r in failures:
+            print(f"    {r.case_id}  [{r.failure_mode}]")
+
+    print(f"{'═' * W}\n")
 
 
 def main() -> None:
     if not TEST_CASES:
-        print("No valid test cases generated.")
+        print("No valid test cases found.")
         return
 
+    total = len(TEST_CASES)
     results: List[EvaluationResult] = []
 
     for index, test_case in enumerate(TEST_CASES, start=1):
         try:
             result = evaluate_test_case(test_case)
             results.append(result)
-            print_test_result(index, result)
+            print_test_result(index, total, result)
         except Exception as exc:
-            print(f"Test {index}")
-            print(f"Expected commit: {test_case.get('expected_commit', 'unknown')}")
-            print(f"Error: {exc}")
-            print("-" * 60)
+            print(f"\n  Case {index}  error: {exc}")
+            print(f"  Expected: {test_case.get('expected_commit', 'unknown')}")
+            print(f"  {'─' * W}")
 
     print_summary(results)
 
