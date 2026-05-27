@@ -39,17 +39,21 @@ def call_site_breakage_score(commit, failure_functions, include_breakdown=False)
 
     score = 0.0
 
-    for cf in modified:
-        for ff in failure_funcs:
-            # Exact match (strong)
+    # For each failure function, award the best match across all commit functions.
+    # This bounds the contribution to one evidence point per trace function,
+    # preventing breadth accumulation from large commits with many prefix-matching
+    # functions inflating the score beyond causal precision.
+    for ff in failure_funcs:
+        best = 0.0
+        for cf in modified:
             if cf == ff:
-                score += 8
-
-            # Prefix similarity (captures related lifecycle functions)
+                best = 8.0
+                break  # Exact match is the maximum; no need to continue
             else:
                 min_len = min(len(cf), len(ff), 12)
                 if cf[:min_len] == ff[:min_len]:
-                    score += 4
+                    best = max(best, 4.0)
+        score += best
 
     # Structural caller/callee adjacency: (failure_fn, modified_fn) pair
     # exists in the changed file — stack-trace function calls modified function
