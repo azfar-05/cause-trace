@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Sequence
 
 from src.git_utils import get_commit_changes
 from src.matcher import RECENCY_WEIGHT, rank_commits
+from src.narrower import narrow_candidates
 from src.parser import (
     extract_file_line_pairs,
     extract_files_from_stacktrace,
@@ -39,6 +40,7 @@ class EvaluationResult:
     matched_top1: bool
     matched_top3: bool
     matched_top5: bool
+    narrow_stats: Dict
 
 
 def commit_matches(expected_commit: str, predicted_commit: str) -> bool:
@@ -132,6 +134,7 @@ def evaluate_test_case(test_case: Dict[str, str]) -> EvaluationResult:
         test_case["good_commit"],
         test_case["bad_commit"],
     )
+    commits, stats = narrow_candidates(commits, parsed["files"])
     ranked = rank_commits(
         commits,
         parsed["files"],
@@ -156,6 +159,7 @@ def evaluate_test_case(test_case: Dict[str, str]) -> EvaluationResult:
         matched_top1=top_k_match(test_case["expected_commit"], ranked, 1),
         matched_top3=top_k_match(test_case["expected_commit"], ranked, 3),
         matched_top5=top_k_match(test_case["expected_commit"], ranked, 5),
+        narrow_stats=stats,
     )
 
 
@@ -202,6 +206,12 @@ def print_test_result(index: int, total: int, result: "EvaluationResult") -> Non
     print(f"  Case {index}/{total}  ·  {result.case_id}  [{mode}]")
     print(f"{'─' * W}")
     print(f"  Expected   {expected_short}     Result  {label}")
+    ns = result.narrow_stats
+    if ns.get("reduction_pct", 0) > 0:
+        print(
+            f"  Narrowed   {ns['narrowed']}/{ns['total']} commits"
+            f"  ({ns['reduction_pct']}% filtered)"
+        )
     print()
 
     if not result.predicted_commits:
@@ -238,6 +248,10 @@ def print_summary(results: Iterable["EvaluationResult"]) -> None:
     top3_hits = sum(r.matched_top3 for r in results)
     top5_hits = sum(r.matched_top5 for r in results)
 
+    total_raw = sum(r.narrow_stats.get("total", 0) for r in results)
+    total_narrowed = sum(r.narrow_stats.get("narrowed", 0) for r in results)
+    overall_pct = round(100.0 * (1 - total_narrowed / total_raw), 1) if total_raw > 0 else 0
+
     print(f"\n{'═' * W}")
     print("  EVALUATION SUMMARY")
     print(f"{'═' * W}")
@@ -245,6 +259,7 @@ def print_summary(results: Iterable["EvaluationResult"]) -> None:
     print(f"  Top-1     {top1_hits}/{total}  ({percentage(top1_hits, total):.1f}%)")
     print(f"  Top-3     {top3_hits}/{total}  ({percentage(top3_hits, total):.1f}%)")
     print(f"  Top-5     {top5_hits}/{total}  ({percentage(top5_hits, total):.1f}%)")
+    print(f"  Narrowing {total_narrowed}/{total_raw} commits scored  ({overall_pct}% filtered overall)")
 
     # Per-failure-mode breakdown
     from collections import defaultdict

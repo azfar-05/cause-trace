@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.git_utils import get_commit_changes
 from src.matcher import RECENCY_WEIGHT, rank_commits
+from src.narrower import narrow_candidates
 from src.parser import (
     extract_file_line_pairs,
     extract_files_from_stacktrace,
@@ -297,6 +298,8 @@ def investigate(
         print("No commits found in the specified range.", file=sys.stderr)
         return 1
 
+    commits, narrow_stats = narrow_candidates(commits, files)
+
     ranked = rank_commits(commits, files, file_line_pairs, functions)
     ranked_bd = _ranked_with_breakdown(ranked, files, file_line_pairs, functions)
 
@@ -307,7 +310,13 @@ def investigate(
     rule("═")
     blank()
     print(f"  Repo      {repo_name}  ·  {repo_path}")
-    print(f"  Window    {short(good_commit)}..{short(bad_commit)}  ({len(commits)} commit(s) analyzed)")
+    total_commits = narrow_stats["total"]
+    print(f"  Window    {short(good_commit)}..{short(bad_commit)}  ({total_commits} commit(s) in range)")
+    if narrow_stats["reduction_pct"] > 0:
+        print(
+            f"  Narrowed  {narrow_stats['narrowed']} candidates"
+            f"  ({narrow_stats['reduction_pct']}% filtered — file overlap + recency fallback)"
+        )
 
     # Failure context from parsed trace
     trace_files_short = [f.split("/")[-1] for f in files]
