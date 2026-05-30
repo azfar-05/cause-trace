@@ -20,6 +20,13 @@ def call_site_breakage_score(commit, failure_functions, include_breakdown=False)
             return 0.0, 0.0
         return 0.0
 
+    # Excluded because they are near-universal method names with very low causal
+    # precision: virtually every Python class has __init__ and __getitem__; "get",
+    # "set", "index" appear in stdlib and framework boilerplate; "run" is the
+    # conventional entry-point name for threads, CLI commands, and test runners.
+    # Matching on these names inflates scores for unrelated commits that happen to
+    # touch any method by these names.  Note: if a real regression traces to a
+    # function named "run" or "get", this filter will suppress the signal silently.
     IGNORE = {"get", "set", "index", "run", "__init__", "__getitem__"}
 
     modified = {

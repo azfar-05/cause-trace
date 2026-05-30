@@ -4,6 +4,10 @@ def line_proximity_score(commit, stacktrace_file_lines, matching_files):
     and line numbers present in the stack trace.
 
     A match is counted if a changed line is within ±5 lines of the failure line.
+    The ±5 window was chosen to capture changes in the same logical block as the
+    failure (e.g. the body of a short function) while excluding changes in adjacent
+    functions.  Tightening to ±2 increases precision but misses nearby refactors;
+    widening to ±10 increases recall but fires on unrelated changes in hot files.
     Each file contributes at most once to avoid overcounting.
 
     Returns:

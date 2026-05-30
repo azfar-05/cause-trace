@@ -19,6 +19,7 @@ No vendor-specific SDK — uses requests only.
 
 import os
 import json
+import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -145,6 +146,54 @@ DIFF EXCERPT (≤150 lines, filtered to matched files)
 
 Respond with JSON only.
 """
+
+
+# ── diff and trace preparation (called by main.py before explain_top_commit) ──
+
+def fetch_diff_excerpt(repo_path: str, commit_hash: str, matched_files: List[str]) -> str:
+    """
+    Return up to 150 lines of diff for matched_files in the given commit.
+    Resolves basenames to full repo-relative paths via git show --name-only.
+    Returns empty string on any failure; caller treats that as unavailable.
+    """
+    if not matched_files:
+        return ""
+    basenames = {f.split("/")[-1] for f in matched_files}
+    try:
+        names = subprocess.run(
+            ["git", "show", "--name-only", "--format=", commit_hash],
+            cwd=repo_path, capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    if names.returncode != 0:
+        return ""
+    full_paths = [ln for ln in names.stdout.splitlines() if ln and ln.split("/")[-1] in basenames]
+    if not full_paths:
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "show", commit_hash, "--"] + full_paths,
+            cwd=repo_path, capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return "\n".join(result.stdout.splitlines()[:150])
+
+
+def build_stacktrace_summary(
+    files: List[str],
+    file_line_pairs: List[Tuple[str, int]],
+    functions: List[str],
+) -> Dict:
+    """Package parsed trace data into the dict expected by explain_top_commit."""
+    return {
+        "files": files,
+        "file_line_pairs": file_line_pairs,
+        "functions": functions,
+    }
 
 
 # ── main entry point ──────────────────────────────────────────────────────────

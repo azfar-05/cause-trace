@@ -1,16 +1,12 @@
 import json
 import os
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Sequence
 
-from src.git_utils import get_commit_changes
-from src.matcher import RECENCY_WEIGHT, rank_commits
-from src.narrower import narrow_candidates
-from src.parser import (
-    extract_file_line_pairs,
-    extract_files_from_stacktrace,
-    extract_functions_from_stacktrace,
-)
+import src.git_utils as git_utils
+from src.investigation import run_pipeline
+from src.matcher import recency_scores
 from src.signals.scorer import score_commit
 
 
@@ -41,6 +37,7 @@ class EvaluationResult:
     matched_top3: bool
     matched_top5: bool
     narrow_stats: Dict
+    timing: Dict = field(default_factory=dict)
 
 
 def commit_matches(expected_commit: str, predicted_commit: str) -> bool:
@@ -64,14 +61,6 @@ def validate_test_case(test_case: Dict[str, str]) -> None:
         raise ValueError(f"Missing required test case fields: {missing_fields}")
 
 
-def parse_stacktrace(stacktrace: str) -> Dict[str, Sequence]:
-    return {
-        "files": extract_files_from_stacktrace(stacktrace),
-        "file_line_pairs": extract_file_line_pairs(stacktrace),
-        "functions": extract_functions_from_stacktrace(stacktrace),
-    }
-
-
 def top_k_match(expected_commit: str, ranked_commits: Sequence[Dict], k: int) -> bool:
     return any(
         commit_matches(expected_commit, commit["hash"])
@@ -80,22 +69,7 @@ def top_k_match(expected_commit: str, ranked_commits: Sequence[Dict], k: int) ->
 
 
 def recency_breakdown(commits: Sequence[Dict]) -> Dict[str, float]:
-    if not commits:
-        return {}
-
-    timestamps = [commit.get("timestamp", 0) for commit in commits]
-    min_ts = min(timestamps)
-    max_ts = max(timestamps)
-
-    def normalize(ts: int) -> float:
-        if max_ts == min_ts:
-            return 1.0
-        return (ts - min_ts) / (max_ts - min_ts)
-
-    return {
-        commit["hash"]: round(normalize(commit.get("timestamp", 0)) * RECENCY_WEIGHT, 2)
-        for commit in commits
-    }
+    return recency_scores(commits)
 
 
 def attach_score_breakdowns(
@@ -116,10 +90,10 @@ def attach_score_breakdowns(
         )
         breakdown_commits.append({**commit, "breakdown": breakdown})
 
-    recency_scores = recency_breakdown(ranked_commits)
+    recency_map = recency_breakdown(ranked_commits)
 
     for commit in breakdown_commits:
-        commit["breakdown"]["recency"] = recency_scores.get(commit["hash"], 0.0)
+        commit["breakdown"]["recency"] = recency_map.get(commit["hash"], 0.0)
         commit["breakdown"]["final"] = commit["score"]
 
     return breakdown_commits
@@ -128,27 +102,39 @@ def attach_score_breakdowns(
 def evaluate_test_case(test_case: Dict[str, str]) -> EvaluationResult:
     validate_test_case(test_case)
 
-    parsed = parse_stacktrace(test_case["stacktrace"])
-    commits = get_commit_changes(
+    case_start = time.perf_counter()
+    git_utils.reset_timing()
+
+    pipe = run_pipeline(
         test_case["repo_path"],
         test_case["good_commit"],
         test_case["bad_commit"],
-    )
-    commits, stats = narrow_candidates(commits, parsed["files"])
-    ranked = rank_commits(
-        commits,
-        parsed["files"],
-        parsed["file_line_pairs"],
-        parsed["functions"],
+        test_case["stacktrace"],
     )
 
+    _t = time.perf_counter()
     with_breakdowns = attach_score_breakdowns(
-        ranked,
-        parsed["files"],
-        parsed["file_line_pairs"],
-        parsed["functions"],
+        pipe.ranked,
+        pipe.files,
+        pipe.file_line_pairs,
+        pipe.functions,
     )
+    scoring_s = time.perf_counter() - _t
+
     top_five = with_breakdowns[:5]
+
+    gt = git_utils.timing
+    case_timing = {
+        "total_s":        time.perf_counter() - case_start,
+        "git_wall_s":     sum(gt[k] for k in ("iter_commits", "diff_extract", "changed_lines", "fetch_file")),
+        "iter_commits_s": gt["iter_commits"],
+        "diff_extract_s": gt["diff_extract"],
+        "changed_lines_s":gt["changed_lines"],
+        "fetch_file_s":   gt["fetch_file"],
+        "fn_extract_s":   gt["fn_extract"],
+        "structural_s":   gt["structural_pairs"],
+        "scoring_s":      scoring_s,
+    }
 
     return EvaluationResult(
         case_id=test_case.get("id", "unknown"),
@@ -156,10 +142,11 @@ def evaluate_test_case(test_case: Dict[str, str]) -> EvaluationResult:
         repo_path=test_case["repo_path"],
         expected_commit=test_case["expected_commit"],
         predicted_commits=top_five,
-        matched_top1=top_k_match(test_case["expected_commit"], ranked, 1),
-        matched_top3=top_k_match(test_case["expected_commit"], ranked, 3),
-        matched_top5=top_k_match(test_case["expected_commit"], ranked, 5),
-        narrow_stats=stats,
+        matched_top1=top_k_match(test_case["expected_commit"], pipe.ranked, 1),
+        matched_top3=top_k_match(test_case["expected_commit"], pipe.ranked, 3),
+        matched_top5=top_k_match(test_case["expected_commit"], pipe.ranked, 5),
+        narrow_stats=pipe.narrow_stats,
+        timing=case_timing,
     )
 
 
@@ -212,6 +199,19 @@ def print_test_result(index: int, total: int, result: "EvaluationResult") -> Non
             f"  Narrowed   {ns['narrowed']}/{ns['total']} commits"
             f"  ({ns['reduction_pct']}% filtered)"
         )
+    t = result.timing
+    if t:
+        git_sub = (
+            f"iter {t['iter_commits_s']:.2f}s  "
+            f"diff {t['diff_extract_s']:.2f}s  "
+            f"lines {t['changed_lines_s']:.2f}s  "
+            f"fetch_file {t['fetch_file_s']:.2f}s"
+        )
+        print(f"  Timing     total {t['total_s']:.2f}s")
+        print(f"    git          {t['git_wall_s']:.2f}s  ({git_sub})")
+        print(f"    fn_extract   {t['fn_extract_s']:.3f}s")
+        print(f"    struct_pairs {t['structural_s']:.3f}s")
+        print(f"    scoring      {t['scoring_s']:.3f}s")
     print()
 
     if not result.predicted_commits:
@@ -252,6 +252,19 @@ def print_summary(results: Iterable["EvaluationResult"]) -> None:
     total_narrowed = sum(r.narrow_stats.get("narrowed", 0) for r in results)
     overall_pct = round(100.0 * (1 - total_narrowed / total_raw), 1) if total_raw > 0 else 0
 
+    total_time   = sum(r.timing.get("total_s", 0)        for r in results)
+    git_time     = sum(r.timing.get("git_wall_s", 0)     for r in results)
+    iter_time    = sum(r.timing.get("iter_commits_s", 0) for r in results)
+    diff_time    = sum(r.timing.get("diff_extract_s", 0) for r in results)
+    lines_time   = sum(r.timing.get("changed_lines_s", 0)for r in results)
+    fetch_time   = sum(r.timing.get("fetch_file_s", 0)   for r in results)
+    fn_time      = sum(r.timing.get("fn_extract_s", 0)   for r in results)
+    struct_time  = sum(r.timing.get("structural_s", 0)   for r in results)
+    scoring_time = sum(r.timing.get("scoring_s", 0)      for r in results)
+
+    def pct(x: float) -> str:
+        return f"{100*x/total_time:.0f}%" if total_time else "—"
+
     print(f"\n{'═' * W}")
     print("  EVALUATION SUMMARY")
     print(f"{'═' * W}")
@@ -260,6 +273,17 @@ def print_summary(results: Iterable["EvaluationResult"]) -> None:
     print(f"  Top-3     {top3_hits}/{total}  ({percentage(top3_hits, total):.1f}%)")
     print(f"  Top-5     {top5_hits}/{total}  ({percentage(top5_hits, total):.1f}%)")
     print(f"  Narrowing {total_narrowed}/{total_raw} commits scored  ({overall_pct}% filtered overall)")
+
+    print()
+    print(f"  Timing  {total} cases  total {total_time:.1f}s  avg {total_time/total:.2f}s/case")
+    print(f"    git ops      {git_time:.2f}s  {pct(git_time)}")
+    print(f"      iter       {iter_time:.2f}s")
+    print(f"      diff       {diff_time:.2f}s")
+    print(f"      git lines  {lines_time:.2f}s")
+    print(f"      fetch_file {fetch_time:.2f}s")
+    print(f"    fn_extract   {fn_time:.3f}s  {pct(fn_time)}")
+    print(f"    struct_pairs {struct_time:.3f}s  {pct(struct_time)}")
+    print(f"    scoring      {scoring_time:.3f}s  {pct(scoring_time)}")
 
     # Per-failure-mode breakdown
     from collections import defaultdict

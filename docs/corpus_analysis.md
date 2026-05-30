@@ -1,8 +1,10 @@
 # CauseTrace Corpus Analysis
 
-**Date:** 2026-05-26  
-**Corpus size:** 13 cases  
-**Overall accuracy:** 12/13 top-1 (92.3%)
+**Date:** 2026-05-30  
+**Corpus size:** 12 cases  
+**Overall accuracy:** 12/12 top-1 (100%)
+
+> **2026-05-30 update:** `flask-app-line-984` removed. The case had a 2890-commit window spanning 8 years, an expected commit that was a bulk `black` reformat with no behavioral change, a fabricated stacktrace (`unknown_function`, `RuntimeError: test failure`), and a failure line inside a docstring. It violated four corpus acceptance criteria and was not a valid regression case. Test numbering below reflects the original 13-case corpus (no renumbering applied).
 
 ---
 
@@ -23,15 +25,9 @@
 
 ## Per-Case Signal Breakdown
 
-### Test 1 — flask-app-line-984 — FAIL
+### ~~Test 1 — flask-app-line-984~~ — REMOVED
 
-**Score of winner (wrong):** 21.56 | line=10, function=0, file=7, recency=2.76  
-**Expected commit:** 025589ee (not in top 5)  
-**Failure mode:** line\_proximity tag, but expected commit lost
-
-The stacktrace points to `app.py` line 984. Many commits in the window touch `app.py` near that line. All top-5 commits achieve line=10, file=7, function=0 — the structural signals are saturated and identical across candidates. With no function overlap to break the tie, recency becomes the de facto ranker. The expected commit is older and falls below top 5.
-
-**Root cause of failure:** Hot-file ambiguity. When multiple commits touch the same file near the same line and none modify the function named in the trace, the scorer has no remaining signal to discriminate. Recency takes over and ranks the causal commit out.
+Case removed 2026-05-30. See header note.
 
 ---
 
@@ -159,7 +155,7 @@ Line proximity appears in 10 of 12 winning commits (score=10 in all 10).
 When it fires, it adds the equivalent of 1.25 exact function matches and overwhelms most other single signals.  
 It does not fire in Tests 6 and 9, yet both still pass — but for different reasons.
 
-**Dominance risk:** When multiple commits touch the same file near the same line region, line proximity becomes a tie-creator rather than a discriminator. This is the mechanism behind the single failure (Test 1).
+**Dominance risk:** When multiple commits touch the same file near the same line region, line proximity becomes a tie-creator rather than a discriminator. The removed case (Test 1) was the corpus instance of this failure mode; it is no longer represented.
 
 ### Function Score
 
@@ -170,7 +166,7 @@ The function score scales with the number of (modified\_function, failure\_funct
 
 **Effective discriminator in:** Tests 3, 4, 5, 6, 8, 10, 12, 13 — cases where the causal commit modifies the exact function named in the trace.
 
-**Weak or absent in:** Tests 1, 2, 9. Function=0 in Test 1 and Test 9 for the correct commit, removing the best discriminator.
+**Weak or absent in:** Tests 2, 9. Function=0 in Test 9 for the correct commit, removing the best discriminator.
 
 ### Recency
 
@@ -180,7 +176,7 @@ Recency correctly assists in: Tests 2, 3, 4, 5, 8, 11, 12, 13 (causal commit is 
 
 Recency is overridden by structural signals in: Tests 7, 10 (causal commit is oldest but wins on function+line).
 
-**Recency as de facto tiebreaker:** When file and line signals are saturated across multiple commits and function signal is absent, recency determines rank. Test 1 is the failure case of this dynamic. Test 9 is a near-miss of the same dynamic.
+**Recency as de facto tiebreaker:** When file and line signals are saturated across multiple commits and function signal is absent, recency determines rank. Test 9 is a near-miss of this dynamic (file-only win, narrow margin).
 
 ### File Overlap
 
@@ -204,11 +200,11 @@ For Test 7 the penalty is 5.37 against a function score of 46 — the penalty is
 
 ### Class 1: Hot-File Saturation
 
-**Cases:** Test 1 (failure), potentially others with wide windows.
+**Cases:** None currently in corpus (Test 1 removed).
 
 **Mechanism:** Many commits touch a popular file (e.g., `app.py`) near a heavily-modified line region. File score and line proximity fire identically for multiple commits. Without function evidence, the scorer is left with recency as its only remaining discriminator, which may not correlate with causality.
 
-**Current boundary:** The scorer handles this badly. One failure in the corpus (Test 1) belongs to this class.
+**Current boundary:** This failure mode is unrepresented after removal of Test 1. A realistic instance (bounded window, real regression, real stacktrace) remains a gap in the corpus.
 
 ### Class 2: Large-Commit Function Inflation
 
@@ -248,7 +244,7 @@ For Test 7 the penalty is 5.37 against a function score of 46 — the penalty is
 
 ## Notable Ranking Weaknesses
 
-**Test 1 (only failure):** Expected commit is not in top 5. The commit window is sufficiently wide that multiple commits pass both the file and line proximity threshold simultaneously, leaving the scorer unable to identify the causal one. The scorer has no mechanism to handle tie-breaking within a saturated signal space without additional structural evidence.
+**Test 1 (removed):** This was the only failure in the original corpus. The case was invalid — see header note. Hot-file saturation at realistic window sizes is not yet covered by any remaining case.
 
 **Test 7 (inflated margin):** Correct top-1 result, but function score of 46 is evidence of mass-overlap inflation rather than targeted causal signal. The result is correct but not for the right reasons. A second commit of similar breadth in the same window could defeat the causal commit.
 
@@ -258,13 +254,14 @@ For Test 7 the penalty is 5.37 against a function score of 46 — the penalty is
 
 ## Observations on Benchmark Composition
 
-**Corpus skew toward function-overlap cases:** 8 of 13 cases are tagged `function-overlap`. The scorer is calibrated well for this class. Most wins are clean three-signal convergences (file+function+line).
+**Corpus skew toward function-overlap cases:** 8 of 12 cases are tagged `function-overlap`. The scorer is calibrated well for this class. Most wins are clean three-signal convergences (file+function+line).
 
-**Indirect causality (expected ≠ bad\_commit):** 3 cases (Tests 7, 9, 10) have a causal commit inside the window that is not the most recent commit. This is a structurally harder class: recency works against the correct answer. All three pass, but for varying quality of reasons (Test 10: correct, Test 7: inflated, Test 9: fragile).
+**Indirect causality (expected ≠ bad\_commit):** 3 of 12 cases (Tests 7, 9, 10) have a causal commit inside the window that is not the most recent commit. This is a structurally harder class: recency works against the correct answer. All three pass, but for varying quality of reasons (Test 10: correct, Test 7: inflated, Test 9: fragile).
 
-**Narrow vs. wide windows:** Most passing cases have tight commit windows (1–5 commits) or clear dominance. Test 1 has a wide window with many similarly-scored commits. The scorer's accuracy is strongly coupled to window size — wider windows increase the probability of hot-file saturation.
+**Narrow vs. wide windows:** All remaining cases have tight commit windows (1–7 commits) or clear dominance. Wide-window behavior is unrepresented after removal of Test 1. The scorer's accuracy is strongly coupled to window size — wider windows increase the probability of hot-file saturation — but this is not exercised in the current corpus.
 
 **Underrepresented failure modes:**
+- Hot-file saturation at a realistic bounded window (was only Test 1; that case was invalid and removed)
 - Cross-file propagation where files are unrelated by name (no partial match possible)
 - API contract breakage where the causal commit and the failure are in different modules entirely
 - Large refactors that are NOT the causal commit, competing with a small targeted fix

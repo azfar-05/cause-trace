@@ -1,17 +1,5 @@
 [
   {
-    "id": "flask-app-line-984",
-    "repo": "flask",
-    "language": "python",
-    "good_commit": "e71a5ff8de93801c30ed6daecac4b8502aa86813",
-    "bad_commit": "025589ee766249652e2e097da05808fe64911ddc",
-    "expected_commit": "025589ee766249652e2e097da05808fe64911ddc",
-    "stacktrace": "File \"src/flask/app.py\", line 984, in unknown_function\n    RuntimeError: test failure",
-    "description": "app.py line 984 changed; file and line overlap case",
-    "failure_mode": "line_proximity",
-    "tags": ["file-overlap", "line-proximity"]
-  },
-  {
     "id": "flask-helpers-redirect-302",
     "repo": "flask",
     "language": "python",

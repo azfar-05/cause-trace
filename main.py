@@ -12,15 +12,15 @@ import subprocess
 import sys
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from src.explainer import Explanation, compute_confidence, explain_top_commit
-from src.git_utils import get_commit_changes
-from src.matcher import RECENCY_WEIGHT, rank_commits
-from src.narrower import narrow_candidates
-from src.parser import (
-    extract_file_line_pairs,
-    extract_files_from_stacktrace,
-    extract_functions_from_stacktrace,
+from src.explainer import (
+    Explanation,
+    build_stacktrace_summary,
+    compute_confidence,
+    explain_top_commit,
+    fetch_diff_excerpt,
 )
+from src.investigation import PipelineResult, run_pipeline
+from src.matcher import RECENCY_WEIGHT, recency_scores
 from src.signals.scorer import score_commit
 
 
@@ -134,70 +134,10 @@ def generate_why(
     return "  ".join(parts)
 
 
-# ── AI explanation helpers ────────────────────────────────────────────────────
-
-def _fetch_diff_excerpt(repo_path: str, commit_hash: str, matched_files: List[str]) -> str:
-    """
-    Run `git show <hash> -- <matched_files>` and return at most 150 lines.
-    Returns an empty string on any failure (caller treats this as unavailable).
-    """
-    if not matched_files:
-        return ""
-    basenames = {f.split("/")[-1] for f in matched_files}
-    try:
-        names = subprocess.run(
-            ["git", "show", "--name-only", "--format=", commit_hash],
-            cwd=repo_path, capture_output=True, text=True, timeout=15,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-    if names.returncode != 0:
-        return ""
-    full_paths = [ln for ln in names.stdout.splitlines() if ln and ln.split("/")[-1] in basenames]
-    if not full_paths:
-        return ""
-    cmd = ["git", "show", commit_hash, "--"] + full_paths
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-
-    if result.returncode != 0:
-        return ""
-
-    lines = result.stdout.splitlines()
-    return "\n".join(lines[:150])
-
-
-def _build_stacktrace_summary(
-    files: List[str],
-    file_line_pairs: List[Tuple[str, int]],
-    functions: List[str],
-) -> Dict:
-    """Package parser output into a clean dict for the explainer."""
-    return {
-        "files": files,
-        "file_line_pairs": file_line_pairs,
-        "functions": functions,
-    }
-
-
 # ── score with full breakdown ─────────────────────────────────────────────────
 
 def _recency_scores(commits: Sequence[Dict]) -> Dict[str, float]:
-    if not commits:
-        return {}
-    timestamps = [c.get("timestamp", 0) for c in commits]
-    lo, hi = min(timestamps), max(timestamps)
-    def norm(ts: int) -> float:
-        return 1.0 if lo == hi else (ts - lo) / (hi - lo)
-    return {c["hash"]: round(norm(c.get("timestamp", 0)) * RECENCY_WEIGHT, 2) for c in commits}
+    return recency_scores(commits)
 
 
 def _ranked_with_breakdown(
@@ -352,26 +292,21 @@ def investigate(
 ) -> int:
     """Run the investigation and print results. Returns 0 on success."""
 
-    # ── Parse stacktrace ──────────────────────────────────────────────────────
-    files = extract_files_from_stacktrace(stacktrace)
-    file_line_pairs = extract_file_line_pairs(stacktrace)
-    functions = extract_functions_from_stacktrace(stacktrace)
-
     # ── Validate range ────────────────────────────────────────────────────────
     if not is_ancestor(repo_path, good_commit, bad_commit):
         print(f"error: {short(good_commit)} is not an ancestor of {short(bad_commit)}", file=sys.stderr)
         return 1
 
-    # ── Pull commits ──────────────────────────────────────────────────────────
-    commits = get_commit_changes(repo_path, good_commit, bad_commit)
-    if not commits:
+    # ── Run pipeline ──────────────────────────────────────────────────────────
+    pipe = run_pipeline(repo_path, good_commit, bad_commit, stacktrace)
+    files, file_line_pairs, functions = pipe.files, pipe.file_line_pairs, pipe.functions
+    narrow_stats = pipe.narrow_stats
+
+    if pipe.narrow_stats["total"] == 0:
         print("No commits found in the specified range.", file=sys.stderr)
         return 1
 
-    commits, narrow_stats = narrow_candidates(commits, files)
-
-    ranked = rank_commits(commits, files, file_line_pairs, functions)
-    ranked_bd = _ranked_with_breakdown(ranked, files, file_line_pairs, functions)
+    ranked_bd = _ranked_with_breakdown(pipe.ranked, files, file_line_pairs, functions)
 
     # ── Header ────────────────────────────────────────────────────────────────
     blank()
@@ -411,8 +346,8 @@ def investigate(
                        if any(f.split("/")[-1] == sf.split("/")[-1]
                               for f in top.get("files", []))]
         confidence = compute_confidence(top["breakdown"])
-        diff_excerpt = _fetch_diff_excerpt(repo_path, top["hash"], matched_top)
-        stacktrace_summary = _build_stacktrace_summary(files, file_line_pairs, functions)
+        diff_excerpt = fetch_diff_excerpt(repo_path, top["hash"], matched_top)
+        stacktrace_summary = build_stacktrace_summary(files, file_line_pairs, functions)
         top1_explanation = explain_top_commit(
             commit=top,
             breakdown=top["breakdown"],
