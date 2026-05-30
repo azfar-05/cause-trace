@@ -166,18 +166,24 @@ Arguments:
 python evaluation_runner.py
 ```
 
-This runs all 13 benchmark cases and prints a per-case breakdown followed by overall accuracy.
+This runs all 12 benchmark cases and prints a per-case breakdown followed by overall accuracy.
 
 Each case specifies:
 - A repository, good commit, bad commit, and expected causal commit
 - A stack trace representing the observed failure
 - A `failure_mode` label indicating what kind of evidence the case tests
 
-Current results: **12/13 top-1 (92.3%)**
+Current results: **12/12 top-1 (100%)**
+
+One previously included case (`flask-app-line-984`) was removed after validation confirmed it was not a legitimate regression case — the commit window was excessively large and causality could not be established. Cases are removed when investigation proves them invalid, not retained to preserve a denominator.
+
+100% accuracy on 12 curated cases does not mean the problem is solved. `docs/benchmark_gaps.md` documents important failure classes that the current corpus does not cover.
 
 ---
 
 ## Benchmark philosophy
+
+The benchmark is a validation artifact, not a marketing metric. Its purpose is to expose failure modes, validate heuristics, and prevent regression drift — not to produce a headline number.
 
 Cases are drawn from real regressions in real open-source projects (flask, urllib3, requests, pytest, werkzeug). Each case:
 
@@ -185,10 +191,32 @@ Cases are drawn from real regressions in real open-source projects (flask, urlli
 - Has a bounded commit window with meaningful ambiguity
 - Has a verified causal commit as ground truth
 
-Cases are curated, not generated. Synthetic or trivial cases are rejected. The benchmark exists to validate heuristics and expose failure modes, not to inflate accuracy numbers.
+Cases are curated, not generated. Synthetic or trivial cases are rejected. A case may be removed at any time if investigation proves it contains invalid causality, fabricated failure context, or is not a real regression. Corpus integrity takes precedence over accuracy metrics.
 
 Benchmark data: `data/cases.json`  
-Corpus analysis: `docs/corpus_analysis.md`
+Corpus analysis: `docs/corpus_analysis.md`  
+Known gaps: `docs/benchmark_gaps.md`
+
+---
+
+## AI-assisted explanation
+
+CauseTrace includes an optional AI explanation mode. After the deterministic ranking pipeline completes, you can request a natural-language explanation of the top-ranked result.
+
+The deterministic attribution is always authoritative. The AI layer cannot influence scores or reorder candidates. It runs strictly after narrowing has already happened.
+
+**Inputs provided to the explanation layer:**
+- Parsed failure context (files, functions, lines from the trace)
+- Top-ranked commit (hash, author, message)
+- Deterministic signal breakdown (which signals fired, at what weight)
+- A filtered diff excerpt (only the hunk most relevant to the failure)
+
+**What the explanation covers:**
+- What changed in the commit
+- Why those changes relate to the observed failure
+- The deterministic confidence level (derived from signal scores, not model judgment)
+
+The explanation is grounded entirely in the retrieved evidence. The model does not have access to the broader repository and cannot speculate beyond what the signal breakdown and diff excerpt contain.
 
 ---
 
@@ -226,14 +254,15 @@ cause-trace/
 ├── main.py                 CLI entry point (investigation workflow)
 ├── evaluation_runner.py    Benchmark runner
 ├── data/
-│   └── cases.json          Benchmark corpus (13 cases)
+│   └── cases.json          Benchmark corpus (12 cases)
 ├── docs/
-│   └── corpus_analysis.md  Signal dominance and failure-mode analysis
+│   ├── corpus_analysis.md  Signal dominance and failure-mode analysis
+│   └── benchmark_gaps.md   Untested failure classes and known blind spots
 ├── src/
 │   ├── parser.py           Stack trace parsing
 │   ├── git_utils.py        Commit extraction and structural analysis
 │   ├── matcher.py          Recency normalization and final ranking
-│   ├── explainer.py        Future hook: AI-assisted explanation (unused)
+│   ├── explainer.py        AI-assisted explanation (optional, post-narrowing)
 │   └── signals/
 │       ├── scorer.py       Score assembly
 │       ├── file_overlap.py File-level signal
@@ -257,9 +286,24 @@ pytest
 
 ---
 
+## Current status
+
+CauseTrace V4 is complete. The following capabilities are implemented and validated:
+
+- **Deterministic attribution engine** — structural signal scoring across file, line, function, and caller/callee dimensions
+- **Recency normalization and commit-size penalty** — post-scoring adjustments applied consistently across the pipeline
+- **Benchmark corpus** — 12 curated real-regression cases, 12/12 top-1 accuracy
+- **Benchmark evaluation infrastructure** — per-case signal breakdown and accuracy reporting
+- **Grounded AI explanation layer** — optional post-narrowing explanation grounded in retrieved diff evidence; does not affect ranking
+- **Benchmark gap analysis** — documented failure classes not covered by the current corpus (`docs/benchmark_gaps.md`)
+
+The deterministic ranking pipeline is the authoritative layer. The AI explanation layer is additive and bounded.
+
+---
+
 ## Design constraints
 
-- **No AI at ranking time.** The scorer is deterministic. LLM assistance is a future phase for explanation only, after narrowing has already happened.
+- **No AI at ranking time.** The scorer is deterministic. AI assistance is bounded to explanation after narrowing has already happened.
 - **No whole-repo traversal.** Structural reasoning is bounded to files touched by commits in the window.
 - **No recursive call graphs.** Caller/callee adjacency is limited to direct call detection within a single file.
 - **Evaluation-driven heuristics.** No signal is added without benchmark evidence that it improves ranking on real cases.
