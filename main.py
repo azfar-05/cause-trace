@@ -12,6 +12,7 @@ import subprocess
 import sys
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from src.explainer import Explanation, compute_confidence, explain_top_commit
 from src.git_utils import get_commit_changes
 from src.matcher import RECENCY_WEIGHT, rank_commits
 from src.narrower import narrow_candidates
@@ -133,6 +134,60 @@ def generate_why(
     return "  ".join(parts)
 
 
+# ── AI explanation helpers ────────────────────────────────────────────────────
+
+def _fetch_diff_excerpt(repo_path: str, commit_hash: str, matched_files: List[str]) -> str:
+    """
+    Run `git show <hash> -- <matched_files>` and return at most 150 lines.
+    Returns an empty string on any failure (caller treats this as unavailable).
+    """
+    if not matched_files:
+        return ""
+    basenames = {f.split("/")[-1] for f in matched_files}
+    try:
+        names = subprocess.run(
+            ["git", "show", "--name-only", "--format=", commit_hash],
+            cwd=repo_path, capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    if names.returncode != 0:
+        return ""
+    full_paths = [ln for ln in names.stdout.splitlines() if ln and ln.split("/")[-1] in basenames]
+    if not full_paths:
+        return ""
+    cmd = ["git", "show", commit_hash, "--"] + full_paths
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+    if result.returncode != 0:
+        return ""
+
+    lines = result.stdout.splitlines()
+    return "\n".join(lines[:150])
+
+
+def _build_stacktrace_summary(
+    files: List[str],
+    file_line_pairs: List[Tuple[str, int]],
+    functions: List[str],
+) -> Dict:
+    """Package parser output into a clean dict for the explainer."""
+    return {
+        "files": files,
+        "file_line_pairs": file_line_pairs,
+        "functions": functions,
+    }
+
+
 # ── score with full breakdown ─────────────────────────────────────────────────
 
 def _recency_scores(commits: Sequence[Dict]) -> Dict[str, float]:
@@ -179,12 +234,31 @@ def _signal_row(label: str, detail: str, value: float, fired: bool) -> None:
     print(f"{left}  {right}")
 
 
+def _print_wrapped(label: Optional[str], text: str) -> None:
+    """Print a labelled paragraph wrapped at ~56 chars."""
+    indent = "        "
+    if label:
+        print(f"        {label}:")
+    words = text.split()
+    line_buf: List[str] = []
+    for word in words:
+        candidate = " ".join(line_buf + [word])
+        if len(candidate) > 56:
+            print(f"{indent}{' '.join(line_buf)}")
+            line_buf = [word]
+        else:
+            line_buf.append(word)
+    if line_buf:
+        print(f"{indent}{' '.join(line_buf)}")
+
+
 def print_commit_block(
     rank: int,
     commit: Dict,
     matched_files: List[str],
     failure_functions: List[str],
     stacktrace_file_lines: List[Tuple[str, int]],
+    explanation: Optional[Explanation] = None,
 ) -> None:
     bd = commit["breakdown"]
     hash_short = commit["hash"][:7]
@@ -237,22 +311,17 @@ def print_commit_block(
     _signal_row("size", f"{n_files} file(s) changed", -penalty, fired=False)
 
     # Why
-    why = generate_why(bd, matched_files, failure_functions, stacktrace_file_lines, commit)
     blank()
-    print("      Why")
-    # wrap at ~58 chars
-    words = why.split()
-    line_buf: List[str] = []
-    indent = "        "
-    for word in words:
-        candidate = " ".join(line_buf + [word])
-        if len(candidate) > 56:
-            print(f"{indent}{' '.join(line_buf)}")
-            line_buf = [word]
-        else:
-            line_buf.append(word)
-    if line_buf:
-        print(f"{indent}{' '.join(line_buf)}")
+    if explanation is not None:
+        # AI-assisted explanation — two grounded fields + deterministic confidence
+        print(f"      Why  [AI · confidence: {explanation.confidence}]")
+        _print_wrapped("What changed", explanation.what_changed)
+        _print_wrapped("Why related", explanation.why_related)
+    else:
+        # Deterministic fallback
+        why = generate_why(bd, matched_files, failure_functions, stacktrace_file_lines, commit)
+        print("      Why")
+        _print_wrapped(None, why)
 
     blank()
 
@@ -279,6 +348,7 @@ def investigate(
     bad_commit: str,
     stacktrace: str,
     top_n: int = 5,
+    use_explain: bool = False,
 ) -> int:
     """Run the investigation and print results. Returns 0 on success."""
 
@@ -333,6 +403,32 @@ def investigate(
     # ── Ranked commits ────────────────────────────────────────────────────────
     section("CULPRIT CANDIDATES")
 
+    # Pre-compute AI explanation for top-1 commit only (if requested)
+    top1_explanation: Optional[Explanation] = None
+    if use_explain and ranked_bd:
+        top = ranked_bd[0]
+        matched_top = [sf for sf in files
+                       if any(f.split("/")[-1] == sf.split("/")[-1]
+                              for f in top.get("files", []))]
+        confidence = compute_confidence(top["breakdown"])
+        diff_excerpt = _fetch_diff_excerpt(repo_path, top["hash"], matched_top)
+        stacktrace_summary = _build_stacktrace_summary(files, file_line_pairs, functions)
+        top1_explanation = explain_top_commit(
+            commit=top,
+            breakdown=top["breakdown"],
+            stacktrace_summary=stacktrace_summary,
+            diff_excerpt=diff_excerpt,
+            confidence=confidence,
+        )
+        if top1_explanation is None and use_explain:
+            import os as _os
+            if not _os.getenv("OPENROUTER_API_KEY"):
+                print("  [explain] OPENROUTER_API_KEY not set — falling back to generate_why()",
+                      file=sys.stderr)
+            else:
+                print("  [explain] AI explanation unavailable — falling back to generate_why()",
+                      file=sys.stderr)
+
     shown = 0
     for i, commit in enumerate(ranked_bd[:top_n], 1):
         if i > 1:
@@ -343,7 +439,8 @@ def investigate(
             if any(f.split("/")[-1] == bn for f in commit.get("files", [])):
                 matched.append(sf)
 
-        print_commit_block(i, commit, matched, functions, file_line_pairs)
+        expl = top1_explanation if (i == 1) else None
+        print_commit_block(i, commit, matched, functions, file_line_pairs, explanation=expl)
         shown += 1
 
     if shown == 0:
@@ -384,6 +481,12 @@ def main() -> None:
     ap.add_argument("--bad",  required=True, help="First known-bad commit (culprit window end)")
     ap.add_argument("--trace", help="Path to stack trace file (reads stdin if omitted)")
     ap.add_argument("--top", type=int, default=5, help="Number of candidates to show (default: 5)")
+    ap.add_argument(
+        "--explain",
+        action="store_true",
+        default=False,
+        help="Generate AI-assisted explanation for the top-ranked commit (requires OPENROUTER_API_KEY)",
+    )
     args = ap.parse_args()
 
     # Resolve repo path
@@ -401,7 +504,10 @@ def main() -> None:
         print("Paste stack trace (Ctrl+D when done):", file=sys.stderr)
         stacktrace = sys.stdin.read()
 
-    sys.exit(investigate(args.repo, repo_path, args.good, args.bad, stacktrace, top_n=args.top))
+    sys.exit(investigate(
+        args.repo, repo_path, args.good, args.bad, stacktrace,
+        top_n=args.top, use_explain=args.explain,
+    ))
 
 
 if __name__ == "__main__":
