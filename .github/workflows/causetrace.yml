@@ -1,0 +1,59 @@
+name: CauseTrace
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for resolve_good_commit to query workflow-run history.
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history is required for git.iter_commits() in the investigation pipeline.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        id: run_tests
+        shell: bash
+        run: |
+          set -o pipefail
+          # --tb=long produces full Traceback blocks that ci_runner.py can parse.
+          pytest tests/ -v --tb=long 2>&1 | tee test-output.txt
+        # continue-on-error keeps the job alive so the investigation step can run.
+        continue-on-error: true
+
+      - name: Run CauseTrace investigation
+        if: steps.run_tests.outcome == 'failure'
+        run: python ci_runner.py --log test-output.txt --output causetrace-results.txt
+        env:
+          # GITHUB_TOKEN provides read access to the workflow-run history API.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload CauseTrace results
+        if: steps.run_tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: causetrace-results
+          path: causetrace-results.txt
+          # Retain results for 30 days for post-failure investigation review.
+          retention-days: 30
+
+      - name: Surface test failure
+        if: steps.run_tests.outcome == 'failure'
+        run: exit 1
