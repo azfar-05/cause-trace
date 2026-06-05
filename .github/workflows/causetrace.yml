@@ -40,7 +40,7 @@ jobs:
 
       - name: Run CauseTrace investigation
         if: steps.run_tests.outcome == 'failure'
-        run: python ci_runner.py --log test-output.txt --output causetrace-results.txt
+        run: python ci_runner.py --log test-output.txt --output causetrace-results.txt --json-record causetrace-record.json
         env:
           # GITHUB_TOKEN provides read access to the workflow-run history API.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,7 +50,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: causetrace-results
-          path: causetrace-results.txt
+          path: |
+            causetrace-results.txt
+            causetrace-record.json
           # Retain results for 30 days for post-failure investigation review.
           retention-days: 30
 

@@ -166,6 +166,11 @@ def main() -> None:
         "--output",
         help="Write investigation results to this file in addition to stdout",
     )
+    ap.add_argument(
+        "--json-record",
+        dest="json_record",
+        help="Write a partial observation record (JSON) to this file for V8 collection",
+    )
     args = ap.parse_args()
 
     # ── Detect CI context ──────────────────────────────────────────────────────
@@ -258,6 +263,7 @@ def main() -> None:
                 stacktrace=trace,
                 top_n=args.top,
                 use_explain=args.explain,
+                record_path=args.json_record,
             )
         finally:
             sys.stdout = original_stdout
@@ -272,6 +278,7 @@ def main() -> None:
             stacktrace=trace,
             top_n=args.top,
             use_explain=args.explain,
+            record_path=args.json_record,
         )
 
     sys.exit(rc)

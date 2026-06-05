@@ -7,9 +7,11 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.explainer import (
@@ -266,6 +268,80 @@ def print_commit_block(
     blank()
 
 
+# ── observation record ───────────────────────────────────────────────────────
+
+def _write_observation_record(
+    record_path: str,
+    repo_name: str,
+    good_commit: str,
+    bad_commit: str,
+    total_commits: int,
+    files: List[str],
+    file_line_pairs: List[Tuple[str, int]],
+    trace_fns: List[str],
+    narrow_stats: Dict,
+    ranked_bd: List[Dict],
+) -> None:
+    top = ranked_bd[0] if ranked_bd else None
+    bd = top.get("breakdown", {}) if top else {}
+
+    source_files = [
+        f for f in files
+        if not (
+            os.path.basename(f).startswith("test_")
+            or "/tests/" in f
+            or f.startswith("tests/")
+        )
+    ]
+
+    record = {
+        "id": f"obs-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "repo": repo_name,
+        "acquisition": {
+            "status": "success",
+            "error_reason": None,
+            "good_commit": good_commit,
+            "bad_commit": bad_commit,
+            "window_size": total_commits,
+            "good_commit_source": "api",
+        },
+        "trace": {
+            "depth": len(file_line_pairs),
+            "contains_source_files": bool(source_files),
+            "files_parsed": files,
+            "functions_parsed": trace_fns,
+            "has_line_numbers": bool(file_line_pairs),
+        },
+        "signals": {
+            "file_overlap_fired": bd.get("file", 0) > 0,
+            "function_signal_fired": bd.get("function", 0) > 0,
+            "line_proximity_fired": bd.get("line", 0) > 0,
+            "caller_callee_fired": bd.get("caller_callee", 0) > 0,
+        },
+        "ranking": {
+            "top_commit": top["hash"] if top else None,
+            "top_score": round(top["score"], 2) if top else None,
+            "candidates_total": narrow_stats.get("narrowed", 0),
+        },
+        "outcome": {
+            "fix_commit": None,
+            "fix_commit_rank": None,
+            "search_space_reduced": None,
+            "causal_in_window": None,
+            "notes": "",
+        },
+        "classification": {
+            "failure_category": None,
+            "gap_class": None,
+            "in_scope": None,
+        },
+    }
+
+    with open(record_path, "w") as fh:
+        json.dump(record, fh, indent=2)
+
+
 # ── main investigation flow ───────────────────────────────────────────────────
 
 def is_ancestor(repo_path: str, good: str, bad: str) -> bool:
@@ -289,6 +365,7 @@ def investigate(
     stacktrace: str,
     top_n: int = 5,
     use_explain: bool = False,
+    record_path: Optional[str] = None,
 ) -> int:
     """Run the investigation and print results. Returns 0 on success."""
 
@@ -402,6 +479,20 @@ def investigate(
     blank()
     rule("═")
     blank()
+
+    if record_path:
+        _write_observation_record(
+            record_path=record_path,
+            repo_name=repo_name,
+            good_commit=good_commit,
+            bad_commit=bad_commit,
+            total_commits=total_commits,
+            files=files,
+            file_line_pairs=file_line_pairs,
+            trace_fns=trace_fns,
+            narrow_stats=narrow_stats,
+            ranked_bd=ranked_bd,
+        )
 
     return 0
 
