@@ -1,8 +1,10 @@
 # CauseTrace Corpus Analysis
 
-**Date:** 2026-05-30  
-**Corpus size:** 12 cases  
+**Date:** 2026-05-30 (V5 note added 2026-06-05)
+**Corpus size:** 12 cases (unchanged through V5)
 **Overall accuracy:** 12/12 top-1 (100%)
+
+> **V5 note (2026-06-05):** The V5 benchmark expansion investigated Gaps 1, 2, 3, 4, and 6. No new cases were added to the corpus. All five gaps were confirmed at the mechanism or architecture level, but no valid benchmark candidates were sourced — the primary obstacle being historical data limitations rather than absence of the failure modes. See `benchmark_gaps.md` for V5 investigation status per gap.
 
 > **2026-05-30 update:** `flask-app-line-984` removed. The case had a 2890-commit window spanning 8 years, an expected commit that was a bulk `black` reformat with no behavioral change, a fabricated stacktrace (`unknown_function`, `RuntimeError: test failure`), and a failure line inside a docstring. It violated four corpus acceptance criteria and was not a valid regression case. Test numbering below reflects the original 13-case corpus (no renumbering applied).
 
