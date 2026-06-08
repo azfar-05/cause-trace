@@ -251,29 +251,44 @@ The explanation is grounded entirely in the retrieved evidence. The model does n
 
 ```
 cause-trace/
-├── main.py                 CLI entry point (investigation workflow)
-├── evaluation_runner.py    Benchmark runner
+├── main.py                    CLI entry point (manual investigation)
+├── ci_runner.py               CI/CD entry point (runs inside GitHub Actions)
+├── evaluation_runner.py       Benchmark runner
+├── sensitivity_analysis.py    Signal weight sensitivity tooling
+├── .github/
+│   └── workflows/
+│       └── causetrace.yml     GitHub Actions workflow (CI acquisition + investigation)
 ├── data/
-│   └── cases.json          Benchmark corpus (12 cases)
+│   ├── cases.json             Benchmark corpus (12 cases)
+│   └── live_observations.json Live CI failure observations
 ├── docs/
-│   ├── corpus_analysis.md  Signal dominance and failure-mode analysis
-│   └── benchmark_gaps.md   Untested failure classes and known blind spots
+│   ├── corpus_analysis.md     Signal dominance and failure-mode analysis
+│   ├── benchmark_gaps.md      Untested failure classes and known blind spots
+│   └── current_direction.md         Live observation schema, failure taxonomy, success criteria
+├── validation/
+│   └── target.py              Breakable target module for CI validation scenarios
 ├── src/
-│   ├── parser.py           Stack trace parsing
-│   ├── git_utils.py        Commit extraction and structural analysis
-│   ├── matcher.py          Recency normalization and final ranking
-│   ├── explainer.py        AI-assisted explanation (optional, post-narrowing)
+│   ├── ci_adapter.py          GitHub Actions API integration (good_commit resolution, trace extraction)
+│   ├── parser.py              Stack trace parsing
+│   ├── git_utils.py           Commit extraction and structural analysis
+│   ├── investigation.py       Investigation orchestration
+│   ├── narrower.py            Candidate narrowing (Tier 1/Tier 2)
+│   ├── matcher.py             Recency normalization and final ranking
+│   ├── explainer.py           AI-assisted explanation (optional, post-narrowing)
 │   └── signals/
-│       ├── scorer.py       Score assembly
-│       ├── file_overlap.py File-level signal
-│       ├── line_proximity.py Line-level signal
-│       ├── call_site.py    Function and caller/callee signal
-│       └── partial_match.py Weak filename match signal
+│       ├── scorer.py          Score assembly
+│       ├── file_overlap.py    File-level signal
+│       ├── line_proximity.py  Line-level signal
+│       ├── call_site.py       Function and caller/callee signal
+│       └── partial_match.py   Weak filename match signal
 └── tests/
     ├── test_parser.py
     ├── test_matcher.py
     ├── test_line_proximity.py
-    └── test_call_site_signal.py
+    ├── test_call_site_signal.py
+    ├── test_ci_adapter.py
+    ├── test_ci_runner.py
+    └── test_validation.py
 ```
 
 ---
@@ -288,16 +303,18 @@ pytest
 
 ## Current status
 
-CauseTrace V4 is complete. The following capabilities are implemented and validated:
+The following capabilities are implemented and validated:
 
 - **Deterministic attribution engine** — structural signal scoring across file, line, function, and caller/callee dimensions
 - **Recency normalization and commit-size penalty** — post-scoring adjustments applied consistently across the pipeline
 - **Benchmark corpus** — 12 curated real-regression cases, 12/12 top-1 accuracy
 - **Benchmark evaluation infrastructure** — per-case signal breakdown and accuracy reporting
 - **Grounded AI explanation layer** — optional post-narrowing explanation grounded in retrieved diff evidence; does not affect ranking
-- **Benchmark gap analysis** — documented failure classes not covered by the current corpus (`docs/benchmark_gaps.md`)
+- **Benchmark gap analysis** — 10 documented failure classes not covered by the current corpus (`docs/benchmark_gaps.md`)
+- **CI/CD acquisition layer** — `ci_adapter.py` resolves `good_commit` via the GitHub Actions API and extracts the stack trace from CI log output; validated end-to-end in the cause-trace repo's own workflow
+- **Live observation framework** — `docs/current_direction.md` defines the schema, failure taxonomy, and success criteria for collecting 10 live CI failures
 
-The deterministic ranking pipeline is the authoritative layer. The AI explanation layer is additive and bounded.
+The deterministic ranking pipeline is the authoritative layer. The CI/CD layer is the acquisition path for live deployment. The AI explanation layer is additive and bounded.
 
 ---
 
