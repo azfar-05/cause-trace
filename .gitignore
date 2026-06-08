@@ -42,6 +42,3 @@ Thumbs.db
 # Runtime artifacts
 error.log
 *.log
-
-# Claude Code project instructions (local only)
-CLAUDE.md

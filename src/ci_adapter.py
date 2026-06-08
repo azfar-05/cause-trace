@@ -201,6 +201,11 @@ def extract_trace_from_log(
     if not log_text:
         return None
 
+    # GitHub Actions prepends an ISO timestamp to every log line.  Strip it so
+    # that pattern matchers see clean lines (e.g. "_____ test ____" not
+    # "2026-06-03T16:41:49.931Z _____ test ____").  No-op for non-timestamped logs.
+    log_text = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", log_text, flags=re.MULTILINE)
+
     # Collect (position, text) for every candidate trace, then apply preference.
     candidates: List[Tuple[int, str]] = []
     candidates.extend(_find_python_tracebacks(log_text))
