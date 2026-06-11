@@ -22,7 +22,7 @@ from typing import Dict, List, Tuple
 def narrow_candidates(
     commits: List[Dict],
     stacktrace_files: List[str],
-    min_candidates: int = 15,
+    min_candidates: int = 20,
 ) -> Tuple[List[Dict], Dict]:
     """
     Narrow a commit list to causally relevant candidates before scoring.
