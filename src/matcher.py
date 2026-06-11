@@ -54,8 +54,6 @@ def rank_commits(
     max_ts = max(timestamps)
 
     def normalize(ts: int) -> float:
-        if max_ts == min_ts:
-            return 1.0
         return (ts - min_ts) / (max_ts - min_ts)
 
     scored = []
