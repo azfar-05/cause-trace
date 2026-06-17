@@ -1,5 +1,5 @@
 import re
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
 def extract_files_from_stacktrace(stacktrace: str) -> List[str]:
@@ -39,6 +39,19 @@ def extract_file_line_pairs(stacktrace: str) -> List[Tuple[str, int]]:
     matches += re.findall(python_pattern, stacktrace)
     pairs = set((file, int(line)) for file, line in matches)
     return list(pairs)
+
+
+def build_stacktrace_summary(
+    files: List[str],
+    file_line_pairs: List[Tuple[str, int]],
+    functions: List[str],
+) -> Dict:
+    """Package parsed trace data into a structured summary dict."""
+    return {
+        "files": files,
+        "file_line_pairs": file_line_pairs,
+        "functions": functions,
+    }
 
 
 if __name__ == "__main__":

@@ -14,16 +14,18 @@ import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from src.explainer import (
-    Explanation,
-    build_stacktrace_summary,
-    compute_confidence,
-    explain_top_commit,
-    fetch_diff_excerpt,
-)
+from src.git_utils import fetch_diff_excerpt
 from src.investigation import PipelineResult, run_pipeline
 from src.matcher import RECENCY_WEIGHT, recency_scores
-from src.signals.scorer import score_commit
+from src.parser import build_stacktrace_summary
+from src.signals.scorer import compute_confidence, score_commit
+
+# LLM explanation — optional, only imported when --explain is passed
+try:
+    from src.explainer import Explanation, explain_top_commit
+    _EXPLAIN_AVAILABLE = True
+except ImportError:
+    _EXPLAIN_AVAILABLE = False
 
 
 REPOS_ROOT = os.environ.get("CAUSETRACE_REPOS_ROOT", os.path.expanduser("~"))
@@ -200,7 +202,7 @@ def print_commit_block(
     matched_files: List[str],
     failure_functions: List[str],
     stacktrace_file_lines: List[Tuple[str, int]],
-    explanation: Optional[Explanation] = None,
+    explanation=None,
 ) -> None:
     bd = commit["breakdown"]
     hash_short = commit["hash"][:7]
@@ -416,30 +418,33 @@ def investigate(
     section("CULPRIT CANDIDATES")
 
     # Pre-compute AI explanation for top-1 commit only (if requested)
-    top1_explanation: Optional[Explanation] = None
+    top1_explanation = None
     if use_explain and ranked_bd:
-        top = ranked_bd[0]
-        matched_top = [sf for sf in files
-                       if any(f.split("/")[-1] == sf.split("/")[-1]
-                              for f in top.get("files", []))]
-        confidence = compute_confidence(top["breakdown"])
-        diff_excerpt = fetch_diff_excerpt(repo_path, top["hash"], matched_top)
-        stacktrace_summary = build_stacktrace_summary(files, file_line_pairs, functions)
-        top1_explanation = explain_top_commit(
-            commit=top,
-            breakdown=top["breakdown"],
-            stacktrace_summary=stacktrace_summary,
-            diff_excerpt=diff_excerpt,
-            confidence=confidence,
-        )
-        if top1_explanation is None and use_explain:
-            import os as _os
-            if not _os.getenv("OPENROUTER_API_KEY"):
-                print("  [explain] OPENROUTER_API_KEY not set — falling back to generate_why()",
-                      file=sys.stderr)
-            else:
-                print("  [explain] AI explanation unavailable — falling back to generate_why()",
-                      file=sys.stderr)
+        if not _EXPLAIN_AVAILABLE:
+            print("  [explain] explainer not available in this build", file=sys.stderr)
+        else:
+            top = ranked_bd[0]
+            matched_top = [sf for sf in files
+                           if any(f.split("/")[-1] == sf.split("/")[-1]
+                                  for f in top.get("files", []))]
+            confidence = compute_confidence(top["breakdown"])
+            diff_excerpt = fetch_diff_excerpt(repo_path, top["hash"], matched_top)
+            stacktrace_summary = build_stacktrace_summary(files, file_line_pairs, functions)
+            top1_explanation = explain_top_commit(
+                commit=top,
+                breakdown=top["breakdown"],
+                stacktrace_summary=stacktrace_summary,
+                diff_excerpt=diff_excerpt,
+                confidence=confidence,
+            )
+            if top1_explanation is None:
+                import os as _os
+                if not _os.getenv("OPENROUTER_API_KEY"):
+                    print("  [explain] OPENROUTER_API_KEY not set — falling back to generate_why()",
+                          file=sys.stderr)
+                else:
+                    print("  [explain] AI explanation unavailable — falling back to generate_why()",
+                          file=sys.stderr)
 
     shown = 0
     for i, commit in enumerate(ranked_bd[:top_n], 1):

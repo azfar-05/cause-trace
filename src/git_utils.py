@@ -377,6 +377,39 @@ def get_commit_changes(repo_path: str, start_commit: str, end_commit: str) -> Li
     return result
 
 
+def fetch_diff_excerpt(repo_path: str, commit_hash: str, matched_files: List[str]) -> str:
+    """
+    Return up to 150 lines of diff for matched_files in the given commit.
+    Resolves basenames to full repo-relative paths via git show --name-only.
+    Returns empty string on any failure.
+    """
+    if not matched_files:
+        return ""
+    basenames = {f.split("/")[-1] for f in matched_files}
+    try:
+        names = subprocess.run(
+            ["git", "show", "--name-only", "--format=", commit_hash],
+            cwd=repo_path, capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    if names.returncode != 0:
+        return ""
+    full_paths = [ln for ln in names.stdout.splitlines() if ln and ln.split("/")[-1] in basenames]
+    if not full_paths:
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "show", commit_hash, "--"] + full_paths,
+            cwd=repo_path, capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return "\n".join(result.stdout.splitlines()[:150])
+
+
 def extract_modified_functions_from_patch(patch_text: str):
     """
     Heuristically detect functions whose bodies were modified.

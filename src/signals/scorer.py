@@ -1,9 +1,29 @@
 import math
+from typing import Dict
 
 from src.signals.line_proximity import line_proximity_score
 from src.signals.file_overlap import file_overlap_score
 from src.signals.partial_match import partial_match_score
 from src.signals.call_site import call_site_breakage_score
+
+
+def compute_confidence(breakdown: Dict) -> str:
+    """
+    Compute confidence tier from signal scores. Deterministic — no LLM.
+
+      High   : line proximity fired  OR  (function + file both fired)
+      Medium : file or function fired (but not both with line)
+      Low    : no file / function / line match (recency-only ranking)
+    """
+    line = breakdown.get("line", 0)
+    fn   = breakdown.get("function", 0)
+    file = breakdown.get("file", 0)
+
+    if line > 0 or (fn > 0 and file > 0):
+        return "High"
+    if file > 0 or fn > 0:
+        return "Medium"
+    return "Low"
 
 
 def score_commit(
