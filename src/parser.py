@@ -23,8 +23,8 @@ def extract_functions_from_stacktrace(stacktrace: str) -> List[str]:
     # JS style
     js_pattern = r'at\s+([A-Za-z_][A-Za-z0-9_]*)\s*\('
 
-    # Python style
-    py_pattern = r'in\s+([A-Za-z_][A-Za-z0-9_]*)'
+    # Python style: only match "in <name>" at end of a traceback File line
+    py_pattern = r'File\s+"[^"]+",\s+line\s+\d+,\s+in\s+([A-Za-z_][A-Za-z0-9_]*)'
 
     matches = re.findall(js_pattern, stacktrace)
     matches += re.findall(py_pattern, stacktrace)
