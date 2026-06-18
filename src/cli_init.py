@@ -11,12 +11,18 @@ from typing import Dict, List, Optional, Tuple
 try:
     import yaml
     _YAML_AVAILABLE = True
+
+    class _CauseTraceDumper(yaml.Dumper):
+        def ignore_aliases(self, data):
+            return True
+
 except ImportError:
     _YAML_AVAILABLE = False
 
 
 _INJECTED_STEP_ID = "causetrace_test"
 _CAUSETRACE_STEP_NAMES = frozenset({
+    "Install CauseTrace",
     "Run CauseTrace investigation",
     "Upload CauseTrace results",
     "Surface test failure",
@@ -62,8 +68,7 @@ def _configure_dumper() -> None:
     def _literal_representer(dumper, data):
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
 
-    yaml.add_representer(_LiteralStr, _literal_representer)
-    yaml.Dumper.ignore_aliases = lambda *_: True  # suppress &id001 anchors
+    _CauseTraceDumper.add_representer(_LiteralStr, _literal_representer)
 
 
 # ── step manipulation ─────────────────────────────────────────────────────────
@@ -91,7 +96,12 @@ def _wrap_run_cmd(original: str) -> _LiteralStr:
         return _LiteralStr(original)  # already piped
 
     lines = cmd.splitlines()
-    lines[-1] = f"{lines[-1]} 2>&1 | tee test-output.txt"
+    # Strip trailing backslash continuations so the redirect lands on the
+    # actual last command, not a line-continuation character.
+    last = lines[-1].rstrip()
+    if last.endswith("\\"):
+        last = last[:-1].rstrip()
+    lines[-1] = f"{last} 2>&1 | tee test-output.txt"
 
     if "pipefail" not in cmd:
         lines = ["set -o pipefail"] + lines
@@ -102,6 +112,11 @@ def _wrap_run_cmd(original: str) -> _LiteralStr:
 def _causetrace_steps() -> List[Dict]:
     return [
         {
+            "name": "Install CauseTrace",
+            "if": "steps.causetrace_test.outcome == 'failure'",
+            "run": "pip install causetrace",
+        },
+        {
             "name": "Run CauseTrace investigation",
             "if": "steps.causetrace_test.outcome == 'failure'",
             "run": "causetrace-ci --log test-output.txt --output causetrace-results.txt",
@@ -110,7 +125,9 @@ def _causetrace_steps() -> List[Dict]:
         {
             "name": "Upload CauseTrace results",
             "if": "steps.causetrace_test.outcome == 'failure'",
-            "uses": "actions/upload-artifact@v4",
+            # Pin to a specific release; replace with a full commit SHA for
+            # maximum supply-chain safety (see GitHub hardening guide).
+            "uses": "actions/upload-artifact@v4.4.3",
             "with": {
                 "name": "causetrace-results",
                 "path": "causetrace-results.txt",
@@ -196,10 +213,10 @@ def _process_workflow(path: Path, apply: bool) -> List[str]:
     msgs: List[str] = []
 
     try:
-        raw = path.read_text()
+        raw = path.read_text(encoding="utf-8")
         doc = yaml.safe_load(raw)
-    except yaml.YAMLError as exc:
-        return [f"  SKIP  {path.name}: YAML error: {exc}"]
+    except (yaml.YAMLError, OSError) as exc:
+        return [f"  SKIP  {path.name}: {exc}"]
 
     if not isinstance(doc, dict):
         return [f"  SKIP  {path.name}: not a valid workflow document"]
@@ -232,12 +249,13 @@ def _process_workflow(path: Path, apply: bool) -> List[str]:
 
     # Back up and write
     backup = path.with_suffix(path.suffix + ".orig")
-    backup.write_text(raw)
+    backup.write_text(raw, encoding="utf-8")
 
-    output = yaml.dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False, width=4096)
+    output = yaml.dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False,
+                       width=4096, Dumper=_CauseTraceDumper)
     # PyYAML (YAML 1.1) parses `on:` as boolean True; restore the correct key.
     output = re.sub(r"(?m)^true:", "on:", output)
-    path.write_text(output)
+    path.write_text(output, encoding="utf-8")
 
     msgs.append(f"  WROTE {path.name}  (original saved as {backup.name})")
     return msgs
@@ -281,7 +299,14 @@ def init_main(argv: List[str]) -> None:
     root = Path(args.dir).resolve()
 
     if args.workflow:
-        files = [Path(args.workflow).resolve()]
+        wf_path = Path(args.workflow).resolve()
+        if not (wf_path.suffix in {".yml", ".yaml"}
+                and wf_path.parent.name == "workflows"
+                and wf_path.parent.parent.name == ".github"):
+            print("error: --workflow must point to a file inside a .github/workflows/ directory",
+                  file=sys.stderr)
+            sys.exit(1)
+        files = [wf_path]
     else:
         files = _find_workflow_files(root)
 

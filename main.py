@@ -20,12 +20,6 @@ from src.matcher import RECENCY_WEIGHT, recency_scores
 from src.parser import build_stacktrace_summary
 from src.signals.scorer import compute_confidence, score_commit
 
-# LLM explanation — optional, only imported when --explain is passed
-try:
-    from src.explainer import Explanation, explain_top_commit
-    _EXPLAIN_AVAILABLE = True
-except ImportError:
-    _EXPLAIN_AVAILABLE = False
 
 
 REPOS_ROOT = os.environ.get("CAUSETRACE_REPOS_ROOT", os.path.expanduser("~"))
@@ -420,7 +414,9 @@ def investigate(
     # Pre-compute AI explanation for top-1 commit only (if requested)
     top1_explanation = None
     if use_explain and ranked_bd:
-        if not _EXPLAIN_AVAILABLE:
+        try:
+            from src.explainer import explain_top_commit
+        except ImportError:
             print("  [explain] explainer not available in this build", file=sys.stderr)
         else:
             top = ranked_bd[0]
@@ -438,8 +434,7 @@ def investigate(
                 confidence=confidence,
             )
             if top1_explanation is None:
-                import os as _os
-                if not _os.getenv("OPENROUTER_API_KEY"):
+                if not os.getenv("OPENROUTER_API_KEY"):
                     print("  [explain] OPENROUTER_API_KEY not set — falling back to generate_why()",
                           file=sys.stderr)
                 else:
@@ -525,8 +520,12 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    # Resolve repo path
-    repo_path = os.path.join(REPOS_ROOT, args.repo)
+    # Resolve repo path — enforce that it stays inside REPOS_ROOT
+    repos_root_real = os.path.realpath(REPOS_ROOT)
+    repo_path = os.path.realpath(os.path.join(REPOS_ROOT, args.repo))
+    if not (repo_path == repos_root_real or repo_path.startswith(repos_root_real + os.sep)):
+        print(f"error: --repo escapes CAUSETRACE_REPOS_ROOT ({REPOS_ROOT})", file=sys.stderr)
+        sys.exit(1)
     if not os.path.isdir(repo_path):
         print(f"error: repo not found at {repo_path}", file=sys.stderr)
         print(f"       set CAUSETRACE_REPOS_ROOT or clone {args.repo} under ~/", file=sys.stderr)

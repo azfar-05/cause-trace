@@ -13,6 +13,7 @@ existing inputs from CI environment context:
 import os
 import re
 from typing import List, Optional, Tuple
+from urllib.parse import urlparse, quote as _urlquote
 
 try:
     import requests as _requests
@@ -96,6 +97,8 @@ def _resolve_gitlab(branch: str) -> Optional[str]:
         return None
 
     server = os.environ.get("CI_SERVER_URL", "https://gitlab.com").rstrip("/")
+    if urlparse(server).scheme not in ("http", "https"):
+        return None
     resp = _requests.get(
         f"{server}/api/v4/projects/{project_id}/pipelines",
         headers={"PRIVATE-TOKEN": token},
@@ -118,17 +121,20 @@ def _resolve_jenkins(job_name: str, branch: str) -> Optional[str]:
     if not jenkins_url:
         return None
 
+    if urlparse(jenkins_url).scheme not in ("http", "https"):
+        return None
     user = os.environ.get("JENKINS_USER")
     api_token = os.environ.get("JENKINS_API_TOKEN")
     auth = (user, api_token) if (user and api_token) else None
     base = jenkins_url.rstrip("/")
 
     # Multibranch pipeline path first, then simple job path
-    sanitized = branch.replace("/", "%2F") if branch else ""
+    job_encoded = _urlquote(job_name, safe="")
+    sanitized = _urlquote(branch, safe="") if branch else ""
     urls = []
     if sanitized:
-        urls.append(f"{base}/job/{job_name}/job/{sanitized}/lastSuccessfulBuild/api/json")
-    urls.append(f"{base}/job/{job_name}/lastSuccessfulBuild/api/json")
+        urls.append(f"{base}/job/{job_encoded}/job/{sanitized}/lastSuccessfulBuild/api/json")
+    urls.append(f"{base}/job/{job_encoded}/lastSuccessfulBuild/api/json")
 
     for url in urls:
         try:

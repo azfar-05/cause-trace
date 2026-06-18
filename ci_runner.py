@@ -183,7 +183,7 @@ def main() -> None:
     # ── Read CI log ────────────────────────────────────────────────────────────
     if args.log:
         try:
-            with open(args.log) as f:
+            with open(args.log, encoding="utf-8") as f:
                 log_text = f.read()
         except OSError as exc:
             abort(f"cannot read log file {args.log!r}: {exc}")
@@ -267,7 +267,7 @@ def main() -> None:
             )
         finally:
             sys.stdout = original_stdout
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(buffer.getvalue())
     else:
         rc = investigate(
