@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "causetrace"
+version = "0.1.0"
+description = "Deterministic failure-triage and root-cause narrowing engine"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+dependencies = [
+    "gitpython>=3.1",
+    "python-dotenv>=0.19",
+    "requests>=2.28",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Repository = "https://github.com/azfar-05/cause-trace"
+
+[project.scripts]
+causetrace    = "main:main"
+causetrace-ci = "ci_runner:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.setuptools]
+py-modules = ["main", "ci_runner"]

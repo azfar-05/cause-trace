@@ -503,6 +503,11 @@ def investigate(
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        from src.cli_init import init_main
+        init_main(sys.argv[2:])
+        return
+
     ap = argparse.ArgumentParser(
         description="CauseTrace — deterministic failure triage",
         formatter_class=argparse.RawTextHelpFormatter,
